@@ -56,9 +56,13 @@ mainLoop = do
                     Left m -> return $ do
                         liftIO $ do 
                             grabKeyboard dpy root False grabModeAsync grabModeAsync currentTime
+                            grabPointer dpy root False (buttonPressMask .|. buttonReleaseMask) grabModeAsync grabModeAsync 0 0 0 
                             maskEvent dpy (buttonPressMask .|. buttonReleaseMask .|. keyPressMask .|. keyReleaseMask) ptr
-                        grabbedLoop m
-                        liftIO $ ungrabKeyboard dpy currentTime
+                        x <- grabbedLoop m
+                        liftIO $ do 
+                            ungrabKeyboard dpy currentTime
+                            ungrabPointer dpy currentTime
+                        x
                         return ()
                     Right x -> return x
                 of
@@ -78,7 +82,7 @@ mainLoop = do
             return $ Just $ KM up (0x1fff .&. st) (MButton mb)
         else
             return Nothing
-      grabbedLoop :: Bindings -> X ()
+      grabbedLoop :: Bindings -> X (X ())
       grabbedLoop m = do
         XEnv { display = dpy, rootWindow' = root, currentEvent = ptr } <- ask
         liftIO $ nextEvent dpy ptr
@@ -88,10 +92,16 @@ mainLoop = do
             x <- lookup km' m
             case x of
                 Left m' -> return $ grabbedLoop m'
-                Right x -> return x
+                Right x -> return (return x)
             of
             Just x -> x
-            Nothing -> return ()
+            Nothing -> return (return ())
+      isKCode :: KM -> Bool
+      isKCode (KM _ _ (KCode _)) = True
+      isKCode _ = False
+      isMButton :: KM -> Bool
+      isMButton (KM _ _ (MButton _)) = True
+      isMButton _ = False
         
             
     
@@ -162,10 +172,15 @@ relPointerPos w = do
         (_,_,_,_,_, x, y, _) <- queryPointer dpy w
         return (fromIntegral x, fromIntegral y)
 
+withBindings :: (Bindings -> Bindings) -> X ()
+withBindings f = do
+    s@XControl { hkMap = b } <- get
+    put $ s { hkMap = f b }
+
 setBindings :: Bindings -> X ()
 setBindings b = do
-    xc <- get
-    put $ xc { hkMap = b }
+    b' <- mapKeysM normalizeKM b
+    modify $ \s -> s { hkMap = b' }
     
 hotkey :: [KM] -> X () -> X ()
 hotkey kms act = do
