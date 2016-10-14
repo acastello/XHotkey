@@ -1,7 +1,9 @@
+{-# LANGUAGE DoAndIfThenElse #-}
+
 module XHotkey.Core where
 
 import XHotkey.Types
-import Data.MapTree
+import Data.NMap
 
 import Graphics.X11
 import Graphics.X11.Xlib.Extras
@@ -44,8 +46,8 @@ mainLoop = do
         if ext then
             return ()
         else do
-            mapM_ _grabKM (baseKeys hk' L.\\ hk)
-            mapM_ _ungrabKM (hk L.\\ (baseKeys hk'))
+            mapM_ _grabKM (rootKeys hk' L.\\ hk)
+            mapM_ _ungrabKM (hk L.\\ (rootKeys hk'))
             XEnv { display = dpy, rootWindow' = root, currentEvent = ptr } <- ask
             liftIO $ nextEvent dpy ptr
             km <- liftIO $ ptrToKM ptr
@@ -68,7 +70,7 @@ mainLoop = do
                 of
                 Just x -> x
                 Nothing -> return ()
-            loop (baseKeys hk')
+            loop (rootKeys hk')
                 
       ptrToKM :: XEventPtr -> IO (Maybe KM)
       ptrToKM ptr = do
@@ -172,6 +174,20 @@ relPointerPos w = do
         (_,_,_,_,_, x, y, _) <- queryPointer dpy w
         return (fromIntegral x, fromIntegral y)
 
+pointerProp :: X (Double, Double)
+pointerProp = do
+    XEnv { display = dpy } <- ask
+    (target, _) <- liftIO $ getInputFocus dpy
+    (x, y) <- relPointerPos target
+    (_,_,_, w, h, _,_) <- liftIO $ getGeometry dpy target
+    return (fromIntegral x/fromIntegral w, fromIntegral y/fromIntegral h)
+
+currentWindow :: X (Window)
+currentWindow = do
+    XEnv { display = dpy } <- ask
+    (w, _) <- liftIO $ getInputFocus dpy
+    return w
+
 withBindings :: (Bindings -> Bindings) -> X ()
 withBindings f = do
     s@XControl { hkMap = b } <- get
@@ -189,5 +205,5 @@ hotkey kms act = do
 
 printBindings :: X ()
 printBindings =
-    get >>= liftIO . putStrLn . drawMapTree . hkMap
+    get >>= liftIO . putStrLn . drawNMap . hkMap
 

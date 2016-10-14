@@ -5,9 +5,7 @@ module XHotkey
 
 import XHotkey.Types
 import XHotkey.Core
-import Data.MapTree
-
-import System.Random
+import Data.NMap
 
 import Data.Word
 
@@ -28,10 +26,6 @@ binds = mapKeys read $ fromList
         ]
     , "3" .> forkX printBindings >> return ()
     , "4" .> spawn "urxvt -title floating_urxvt" 
-    , "k" .> io $ do
-        n <- randomRIO (5,20) 
-        putStr =<< replicateM n (randomRIO (False, True) >>= \f -> return $ if f then 'K' else 'κ')
-        return ()
     , "mod5-1" .> io$ print "mod5-1"
     , "c" .> setBindings binds' >> printBindings >> return ()
     ]

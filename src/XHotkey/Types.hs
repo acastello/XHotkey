@@ -3,8 +3,8 @@
 module XHotkey.Types 
     where
 
-import qualified Data.MapTree as M
-import Data.MapTree hiding (lookup)
+import qualified Data.NMap as M
+import Data.NMap hiding (lookup)
 
 import Control.Monad.Reader
 import Control.Monad.State
@@ -39,9 +39,9 @@ data XControl = XControl
     , exitScheduled :: Bool
     }
 
-type Bindings = M.MapTree KM (X ())
+type Bindings = M.NMap KM (X ())
 drawBindings :: Bindings -> String
-drawBindings = drawMapTree
+drawBindings = drawNMap
 
 -- | X reader monad
 newtype X a = X (ReaderT XEnv (StateT XControl IO) a)
@@ -108,10 +108,7 @@ instance Read KM where
                                     n' <- T.readPrec :: T.ReadPrec Integer
                                     return (show n')]
                             let ks = stringToKeysym str
-                            if ks == 0 then
-                                fail "invalid keysym string"
-                            else
-                                return (KSym ks)
+                            if ks == 0 then fail "invalid keysym string" else return (KSym ks)
                     , do
                             lit "c"
                             c <- T.get

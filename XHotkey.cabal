@@ -1,0 +1,21 @@
+name:       XHotkey
+version:    0.1.0
+synopsis:   A key binding library for X11
+category:   X11
+license:    LGPL
+author:     Alejandro Castello
+maintainer: a.castello.pas@gmail.com
+cabal-version:  >= 1.2
+build-type: Simple
+
+library
+    hs-source-dirs:     src
+    exposed-modules:    XHotkey
+                        XHotkey.Types
+                        XHotkey.Core 
+    build-depends:      base,
+                        unix,
+                        X11,
+                        mtl >= 2.0,
+                        containers,
+                        NMap
