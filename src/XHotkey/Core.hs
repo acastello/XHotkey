@@ -177,7 +177,7 @@ relPointerPos w = do
 pointerProp :: X (Double, Double)
 pointerProp = do
     XEnv { display = dpy } <- ask
-    (target, _) <- liftIO $ getInputFocus dpy
+    target <- currentWindow
     (x, y) <- relPointerPos target
     (_,_,_, w, h, _,_) <- liftIO $ getGeometry dpy target
     return (fromIntegral x/fromIntegral w, fromIntegral y/fromIntegral h)
