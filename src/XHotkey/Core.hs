@@ -188,6 +188,22 @@ currentWindow = do
     (w, _) <- liftIO $ getInputFocus dpy
     return w
 
+setPointerPos :: Position -> Position -> X ()
+setPointerPos x y = do
+    XEnv { display = dpy, rootWindow' = root } <- ask
+    liftIO $ warpPointer dpy 0 root 0 0 0 0 x y
+    return ()
+
+inCurrentPos :: X a -> X a
+inCurrentPos f = do
+    XEnv { display = dpy } <- ask
+    (x,y) <- pointerPos 
+    w <- currentWindow
+    ret <- f
+    setPointerPos x y
+    liftIO $ setInputFocus dpy w 0 0
+    return ret 
+
 withBindings :: (Bindings -> Bindings) -> X ()
 withBindings f = do
     s@XControl { hkMap = b } <- get
