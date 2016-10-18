@@ -19,6 +19,7 @@ import Data.Maybe (fromMaybe)
 
 import qualified Text.Read as T
 import Text.Read.Lex (numberToInteger)
+import Numeric (showHex)
 
 infixl 7 .<. 
 word .<. shift = shiftL word shift
@@ -66,7 +67,7 @@ data KMitem =
     deriving (Eq, Ord)
 
 instance Show KMitem where
-    show (KCode c) = "0x" ++ show c 
+    show (KCode c) = "0x" ++ showHex c ""
     show (KSym s) = case keysymToString s of
         [] -> "(keysym: " ++ show s ++ ", no symbol)"
         s' -> s'
@@ -173,4 +174,11 @@ normalizeKM (KM u s (KSym ks)) = do
     kc <- liftIO $ keysymToKeycode dpy ks
     return (KM u s (KCode kc))
 normalizeKM km = return km
+
+symfyKM :: KM -> X KM
+symfyKM (KM u s (KCode kc)) = do
+    XEnv { display = dpy } <- ask
+    ks <- liftIO $ keycodeToKeysym dpy kc 0
+    return (KM u s (KSym ks))
+symfyKM km = return km
 
