@@ -162,6 +162,33 @@ instance Enum KM where
     fromEnum (KM up st k) = ((fromEnum up) `shiftL` 59) .|. ((fromIntegral st) `shiftL` 27) .|. fromEnum k
     toEnum n = KM (testBit n 59) (fromIntegral $ n `shiftR` 27 .&. 0xfff) (toEnum $ n .&. 0x7ffffff)
 
+addModifier :: Modifier -> KM -> KM
+addModifier m k = k { keyModifiers = (keyModifiers k) .|. m }
+
+shift_ :: KM -> KM
+shift_ = addModifier shiftMask
+
+caps_ :: KM -> KM
+caps_ = addModifier lockMask
+
+ctrl_ :: KM -> KM
+ctrl_ = addModifier controlMask
+
+mod1_ :: KM -> KM
+mod1_ = addModifier mod1Mask
+
+mod2_ :: KM -> KM
+mod2_ = addModifier mod2Mask
+
+mod3_ :: KM -> KM
+mod3_ = addModifier mod3Mask
+
+mod4_ :: KM -> KM
+mod4_ = addModifier mod4Mask
+
+mod5_ :: KM -> KM
+mod5_ = addModifier mod5Mask
+
 modifiersMask :: Modifier
 modifiersMask = sum [1 `shiftL` i | i <- [0..12]]
 
