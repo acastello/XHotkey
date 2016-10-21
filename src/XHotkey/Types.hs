@@ -162,6 +162,9 @@ instance Enum KM where
     fromEnum (KM up st k) = ((fromEnum up) `shiftL` 59) .|. ((fromIntegral st) `shiftL` 27) .|. fromEnum k
     toEnum n = KM (testBit n 59) (fromIntegral $ n `shiftR` 27 .&. 0xfff) (toEnum $ n .&. 0x7ffffff)
 
+up_ :: KM -> KM
+up_ (KM _ st k) = KM True st k
+
 addModifier :: Modifier -> KM -> KM
 addModifier m k = k { keyModifiers = (keyModifiers k) .|. m }
 

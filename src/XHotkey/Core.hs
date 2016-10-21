@@ -213,6 +213,12 @@ setBindings :: Bindings -> X ()
 setBindings b = do
     b' <- mapKeysM normalizeKM b
     modify $ \s -> s { hkMap = b' }
+
+askKM :: X KM
+askKM = do
+    XEnv { currentEvent = ev, currentEventType = typ } <- ask
+    (_,_,_,_,_,_,_,st,kc,_) <- io $ get_KeyEvent ev
+    return $ KM (typ == keyRelease) st (KCode kc)
     
 hotkey :: [KM] -> X () -> X ()
 hotkey kms act = do
