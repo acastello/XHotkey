@@ -175,16 +175,20 @@ ctrl_ :: KM -> KM
 ctrl_ = addModifier controlMask
 
 mod1_ :: KM -> KM
-mod1_ = addModifier mod1Mask
+mod1_ = addModifier mod1Mask 
+alt_ = mod1_
 
 mod2_ :: KM -> KM
 mod2_ = addModifier mod2Mask
+num_ = mod2_
 
 mod3_ :: KM -> KM
 mod3_ = addModifier mod3Mask
+scroll_ = mod3_
 
 mod4_ :: KM -> KM
 mod4_ = addModifier mod4Mask
+win_ = mod4_
 
 mod5_ :: KM -> KM
 mod5_ = addModifier mod5Mask
