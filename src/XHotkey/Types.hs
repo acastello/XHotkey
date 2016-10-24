@@ -83,22 +83,9 @@ instance Enum KMitem where
         where n' = n `shiftR` 25 .&. 0x3
               n'' = n .&. 0x1ffffff
 
-instance Show KM where
-    show (KM up mod k) = 
-        let s = foldMap state' (listModifiers mod)
-        in s ++ (show k) ++ (if up then " Up" else "")
-        where state' kc = fromMaybe "" $ lookup kc
-                [ (shiftMask, "Shift-"), (lockMask, "Caps-"), (controlMask, "Ctrl-")
-                , (mod1Mask, "Mod1-"), (mod2Mask, "Mod2-"), (mod3Mask, "Mod3-")
-                , (mod4Mask, "Mod4-"), (mod5Mask, "Mod5-"), (button1Mask, "Btn1-")
-                , (button2Mask, "Btn2-"), (button3Mask, "Btn3-")
-                , (button4Mask, "Btn4-"), (button5Mask, "Btn5-") ]
-
-instance Read KM where
+instance Read KMitem where
         readPrec = T.parens $ do 
-                s <- readState 0
-
-                kc <- T.choice 
+                T.choice 
                     [ do
                             str <- T.choice
                                [do 
@@ -121,38 +108,59 @@ instance Read KM where
                             lit "m" T.+++ lit "mouse"
                             n <- T.readPrec
                             return (MButton n) ]
-
-                onrel <- T.choice
-                    [ do
-                        '\'' <- T.get
-                        return True
-                    , do
-                        return False ]
-                return $ KM onrel s kc
             where
-                readState st = T.choice
-                    ((\(k,s) -> do
-                        lit k
-                        readState (st .|. s))
-                    <$> modMap)
-                    T.+++ do
-                        return st
-                modMap = foldMap (uncurry zip) $ fmap repeat <$>
-                    [ (["S-", "Shift-", "shift "], shiftMask)
-                    , (["Caps-", "CapsLock "], lockMask)
-                    , (["C-", "Ctrl-", "ctrl ", "control "], controlMask)
-                    , (["mod1-", "mod1 ", "M-", "meta ", "A-", "Alt-", "alt "], mod1Mask)
-                    , (["mod2-", "mod2 ", "Num-", "NumLock "], mod2Mask)
-                    , (["mod3-", "mod3 ", "Scroll-", "ScrollLock "], mod3Mask)
-                    , (["mod4-", "mod4 ", "Win-", "Win ", "Cmd-", "Cmd ", "Super "], mod4Mask)
-                    , (["mod5-", "mod5 "], mod5Mask)
-                    , (["btn1-", "button1 "], button1Mask)
-                    , (["btn2-", "button2 "], button2Mask)
-                    , (["btn3-", "button3 "], button3Mask)
-                    , (["btn4-", "button4 "], button4Mask)
-                    , (["btn5-", "button5 "], button5Mask) ]
                 lit = mapM (\c -> T.get >>= \c' -> 
                     if toLower c' == toLower c then return c' else fail "")
+
+instance Show KM where
+    show (KM up mod k) = 
+        let s = foldMap state' (listModifiers mod)
+        in s ++ (show k) ++ (if up then " Up" else "")
+        where state' kc = fromMaybe "" $ lookup kc
+                [ (shiftMask, "Shift-"), (lockMask, "Caps-"), (controlMask, "Ctrl-")
+                , (mod1Mask, "Mod1-"), (mod2Mask, "Mod2-"), (mod3Mask, "Mod3-")
+                , (mod4Mask, "Mod4-"), (mod5Mask, "Mod5-"), (button1Mask, "Btn1-")
+                , (button2Mask, "Btn2-"), (button3Mask, "Btn3-")
+                , (button4Mask, "Btn4-"), (button5Mask, "Btn5-") ]
+
+instance Read KM where
+    readPrec = T.parens $ do 
+        s <- readState 0
+        kc <- T.readPrec
+        onrel <- T.choice
+            [ do
+                '\'' <- T.get
+                return True
+            , do
+                lit " up"
+                return True
+            , do
+                return False ]
+        return $ KM onrel s kc
+        where
+            readState st = T.choice
+                ((\(k,s) -> do
+                    lit k
+                    readState (st .|. s))
+                <$> modMap)
+                T.+++ do
+                    return st
+            modMap = foldMap (uncurry zip) $ fmap repeat <$>
+                [ (["S-", "Shift-", "shift "], shiftMask)
+                , (["Caps-", "CapsLock "], lockMask)
+                , (["C-", "Ctrl-", "ctrl ", "control "], controlMask)
+                , (["mod1-", "mod1 ", "M-", "meta ", "A-", "Alt-", "alt "], mod1Mask)
+                , (["mod2-", "mod2 ", "Num-", "NumLock "], mod2Mask)
+                , (["mod3-", "mod3 ", "Scroll-", "ScrollLock "], mod3Mask)
+                , (["mod4-", "mod4 ", "Win-", "Win ", "Cmd-", "Cmd ", "Super "], mod4Mask)
+                , (["mod5-", "mod5 "], mod5Mask)
+                , (["btn1-", "button1 "], button1Mask)
+                , (["btn2-", "button2 "], button2Mask)
+                , (["btn3-", "button3 "], button3Mask)
+                , (["btn4-", "button4 "], button4Mask)
+                , (["btn5-", "button5 "], button5Mask) ]
+            lit = mapM (\c -> T.get >>= \c' -> 
+                if toLower c' == toLower c then return c' else fail "")
 
 instance Ord KM where
     KM u1 m1 k1 `compare` KM u2 m2 k2 = compare k1 k2 `mappend` compare m1 m2 `mappend` compare u1 u2

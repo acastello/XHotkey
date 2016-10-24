@@ -55,6 +55,7 @@ mainLoop = do
             liftIO $ nextEvent dpy ptr
             nevs <- io $ eventsQueued dpy queuedAfterReading
             km <- ptrToKM tmp nevs
+            -- io $ print km
             case do
                 km' <- km
                 x <- lookup km' hk'
@@ -86,7 +87,7 @@ mainLoop = do
                 eventToKM' ptr
             else
                 return (0,nullKM)
-        -- io $ putStrLn $ (show n) ++ ": " ++ (show (t1-t0)) ++ (show km) ++ " - " ++ (show km')
+        -- io $ putStrLn $ (show n) ++ ": " ++ (show km) ++ " - " ++ (show km')
         if (km == nullKM) then    
             return Nothing
         else if n > 0 && t1 == t0 && mainKey km == mainKey km' then io $ do
@@ -217,7 +218,6 @@ inCurrentPos f = do
     ret <- f
     setPointerPos x y
     liftIO $ setInputFocus dpy w 0 0
-    io $ flush dpy
     return ret 
 
 withBindings :: (Bindings -> Bindings) -> X ()
