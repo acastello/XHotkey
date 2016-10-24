@@ -32,7 +32,6 @@ data XEnv = XEnv
     { display   :: Display
     , rootWindow'   :: !Window
     , currentEvent :: XEventPtr
-    , currentEventType :: EventType
     }
 
 data XControl = XControl

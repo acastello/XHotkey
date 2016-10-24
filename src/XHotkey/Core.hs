@@ -28,7 +28,7 @@ runX' :: (X a) -> IO a
 runX' m = do
     dpy <- openDisplay ""
     let root = defaultRootWindow dpy
-    (ret, st) <- allocaXEvent $ \e -> fillBytes e 0 196 >> runX m (XEnv dpy root e 0) (XControl mempty False)
+    (ret, st) <- allocaXEvent $ \e -> fillBytes e 0 196 >> runX m (XEnv dpy root e) (XControl mempty False)
     closeDisplay dpy
     return ret
 
@@ -37,11 +37,13 @@ mainLoop = do
     s@XControl { hkMap = hk } <- get
     hk2 <- traverseKeys normalizeKM hk
     put $ s { hkMap = hk2 }
-    loop mempty
+    tmp <- io $ callocBytes 196 :: X XEventPtr
+    loop tmp mempty
+    io $ free tmp
     return ()
     where 
-      loop :: [KM] -> X ()
-      loop hk = do
+      loop :: XEventPtr -> [KM] -> X ()
+      loop tmp hk = do
         XControl { hkMap = hk', exitScheduled = ext } <- get
         if ext then
             return ()
@@ -50,7 +52,7 @@ mainLoop = do
             mapM_ _ungrabKM (hk L.\\ (rootKeys hk'))
             XEnv { display = dpy, rootWindow' = root, currentEvent = ptr } <- ask
             liftIO $ nextEvent dpy ptr
-            km <- liftIO $ ptrToKM ptr
+            km <- ptrToKM tmp
             case do
                 km' <- km
                 x <- lookup km' hk'
@@ -60,7 +62,7 @@ mainLoop = do
                             grabKeyboard dpy root False grabModeAsync grabModeAsync currentTime
                             grabPointer dpy root False (buttonPressMask .|. buttonReleaseMask) grabModeAsync grabModeAsync 0 0 0 
                             maskEvent dpy (buttonPressMask .|. buttonReleaseMask .|. keyPressMask .|. keyReleaseMask) ptr
-                        x <- grabbedLoop m
+                        x <- grabbedLoop tmp m
                         liftIO $ do 
                             ungrabKeyboard dpy currentTime
                             ungrabPointer dpy currentTime
@@ -70,30 +72,29 @@ mainLoop = do
                 of
                 Just x -> x
                 Nothing -> return ()
-            loop (rootKeys hk')
+            loop tmp (rootKeys hk')
                 
-      ptrToKM :: XEventPtr -> IO (Maybe KM)
+      ptrToKM :: XEventPtr -> X (Maybe KM)
       ptrToKM ptr = do
-        evt <- get_EventType ptr
-        let up = any (== evt) [keyRelease, buttonRelease]
-        if any (== evt) [keyPress, keyRelease ] then do
-            (_,_,_,_,_,_,_, st, kc, _) <- get_KeyEvent ptr
-            return $ Just $ KM up (0x1fff .&. st) (KCode kc)
-        else if any (== evt) [buttonPress, buttonRelease] then do
-            (_,_,_,_,_,_,_, st, mb, _) <- get_ButtonEvent ptr
-            return $ Just $ KM up (0x1fff .&. st) (MButton mb)
-        else
+        XEnv { display = dpy } <- ask
+        km <- askKM
+        km' <- io $ eventToKM ptr
+        if (km == KM False 0 (KCode 0)) then    
             return Nothing
-      grabbedLoop :: Bindings -> X (X ())
-      grabbedLoop m = do
+        else if (km' == km) then
+            io $ nextEvent dpy ptr >> return Nothing
+        else
+            return (Just km)
+      grabbedLoop :: XEventPtr -> Bindings -> X (X ())
+      grabbedLoop tmp m = do
         XEnv { display = dpy, rootWindow' = root, currentEvent = ptr } <- ask
         liftIO $ nextEvent dpy ptr
-        km <- liftIO $ ptrToKM ptr
+        km <- ptrToKM tmp
         case do
             km' <- km
             x <- lookup km' m
             case x of
-                Left m' -> return $ grabbedLoop m'
+                Left m' -> return $ grabbedLoop tmp m'
                 Right x -> return (return x)
             of
             Just x -> x
@@ -144,6 +145,9 @@ spawnPID prog = forkP $ executeFile "/bin/sh" False ["-c", prog] Nothing
 
 spawn :: MonadIO m => String -> m ()
 spawn prog = spawnPID prog >> return ()
+
+currentEventType :: X EventType
+currentEventType = ask >>= liftIO . get_EventType . currentEvent
 
 flushX :: X ()
 flushX = do
@@ -214,12 +218,21 @@ setBindings b = do
     b' <- mapKeysM normalizeKM b
     modify $ \s -> s { hkMap = b' }
 
+eventToKM :: XEventPtr -> IO KM
+eventToKM ptr = do
+    typ <- get_EventType ptr
+    let up = any (== typ) [keyRelease, buttonRelease]
+    if any (== typ) [keyPress, keyRelease ] then do
+        (_,_,_,_,_,_,_, st, kc, _) <- get_KeyEvent ptr
+        return $ KM up (0x1fff .&. st) (KCode kc)
+    else if any (== typ) [buttonPress, buttonRelease] then do
+        (_,_,_,_,_,_,_, st, mb, _) <- get_ButtonEvent ptr
+        return $ KM up (0x1fff .&. st) (MButton mb)
+    else
+        return (KM False 0 (KCode 0))
+
 askKM :: X KM
-askKM = do
-    XEnv { currentEvent = ev, currentEventType = typ } <- ask
-    (_,_,_,_,_,_,_,st,kc,_) <- io $ get_KeyEvent ev
-    return $ KM (typ == keyRelease) st (KCode kc)
-    
+askKM = ask >>= io . eventToKM . currentEvent    
 hotkey :: [KM] -> X () -> X ()
 hotkey kms act = do
     xc@XControl { hkMap = hk, exitScheduled = ext } <- get

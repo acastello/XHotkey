@@ -1,5 +1,5 @@
 name:       XHotkey
-version:    0.1.0
+version:    0.2.0
 synopsis:   A key binding library for X11
 category:   X11
 license:    LGPL
