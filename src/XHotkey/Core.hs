@@ -217,6 +217,7 @@ inCurrentPos f = do
     ret <- f
     setPointerPos x y
     liftIO $ setInputFocus dpy w 0 0
+    io $ flush dpy
     return ret 
 
 withBindings :: (Bindings -> Bindings) -> X ()
