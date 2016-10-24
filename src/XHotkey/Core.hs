@@ -17,6 +17,7 @@ import Control.Monad.Reader
 
 import Control.Concurrent
 import Foreign
+import Foreign.C
 import qualified Data.List as L
 import qualified Data.Map as M
 import Prelude hiding (lookup)
@@ -52,7 +53,8 @@ mainLoop = do
             mapM_ _ungrabKM (hk L.\\ (rootKeys hk'))
             XEnv { display = dpy, rootWindow' = root, currentEvent = ptr } <- ask
             liftIO $ nextEvent dpy ptr
-            km <- ptrToKM tmp
+            nevs <- io $ eventsQueued dpy queuedAfterReading
+            km <- ptrToKM tmp nevs
             case do
                 km' <- km
                 x <- lookup km' hk'
@@ -74,22 +76,31 @@ mainLoop = do
                 Nothing -> return ()
             loop tmp (rootKeys hk')
                 
-      ptrToKM :: XEventPtr -> X (Maybe KM)
-      ptrToKM ptr = do
-        XEnv { display = dpy } <- ask
-        km <- askKM
-        km' <- io $ eventToKM ptr
-        if (km == KM False 0 (KCode 0)) then    
+      ptrToKM :: XEventPtr -> CInt -> X (Maybe KM)
+      ptrToKM ptr n = do
+        XEnv { display = dpy, currentEvent = cur } <- ask
+        (t0, km) <- io $ eventToKM' cur
+        (t1, km') <- 
+            if n > 0 then io $ do
+                peekEvent dpy ptr 
+                eventToKM' ptr
+            else
+                return (0,nullKM)
+        -- io $ putStrLn $ (show n) ++ ": " ++ (show (t1-t0)) ++ (show km) ++ " - " ++ (show km')
+        if (km == nullKM) then    
             return Nothing
-        else if (km' == km) then
-            io $ nextEvent dpy ptr >> return Nothing
+        else if n > 0 && t1 == t0 && mainKey km == mainKey km' then io $ do
+            -- putStrLn "skippin'"
+            nextEvent dpy ptr
+            return Nothing
         else
             return (Just km)
       grabbedLoop :: XEventPtr -> Bindings -> X (X ())
       grabbedLoop tmp m = do
         XEnv { display = dpy, rootWindow' = root, currentEvent = ptr } <- ask
         liftIO $ nextEvent dpy ptr
-        km <- ptrToKM tmp
+        nevs <- io $ eventsQueued dpy queuedAfterReading
+        km <- ptrToKM tmp nevs
         case do
             km' <- km
             x <- lookup km' m
@@ -218,18 +229,21 @@ setBindings b = do
     b' <- mapKeysM normalizeKM b
     modify $ \s -> s { hkMap = b' }
 
-eventToKM :: XEventPtr -> IO KM
-eventToKM ptr = do
+eventToKM' :: XEventPtr -> IO (Time, KM)
+eventToKM' ptr = do
     typ <- get_EventType ptr
     let up = any (== typ) [keyRelease, buttonRelease]
     if any (== typ) [keyPress, keyRelease ] then do
-        (_,_,_,_,_,_,_, st, kc, _) <- get_KeyEvent ptr
-        return $ KM up (0x1fff .&. st) (KCode kc)
+        (_,_,t,_,_,_,_, st, kc, _) <- get_KeyEvent ptr
+        return (t, KM up (0x1fff .&. st) (KCode kc))
     else if any (== typ) [buttonPress, buttonRelease] then do
-        (_,_,_,_,_,_,_, st, mb, _) <- get_ButtonEvent ptr
-        return $ KM up (0x1fff .&. st) (MButton mb)
+        (_,_,t,_,_,_,_, st, mb, _) <- get_ButtonEvent ptr
+        return (t, KM up (0x1fff .&. st) (MButton mb))
     else
-        return (KM False 0 (KCode 0))
+        return $ (0, nullKM)
+
+eventToKM :: XEventPtr -> IO KM
+eventToKM ptr = snd <$> eventToKM' ptr
 
 askKM :: X KM
 askKM = ask >>= io . eventToKM . currentEvent    
