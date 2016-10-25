@@ -205,7 +205,7 @@ pointerProp = do
     (_,_,_, w, h, _,_) <- liftIO $ getGeometry dpy target
     return (fromIntegral x/fromIntegral w, fromIntegral y/fromIntegral h)
 
-currentWindow :: X (Window)
+currentWindow :: X Window
 currentWindow = do
     XEnv { display = dpy } <- ask
     (w, _) <- liftIO $ getInputFocus dpy
@@ -255,6 +255,7 @@ eventToKM ptr = snd <$> eventToKM' ptr
 
 askKM :: X KM
 askKM = ask >>= io . eventToKM . currentEvent    
+
 hotkey :: [KM] -> X () -> X ()
 hotkey kms act = do
     xc@XControl { hkMap = hk, exitScheduled = ext } <- get
