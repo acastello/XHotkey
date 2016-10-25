@@ -29,7 +29,8 @@ runX' :: (X a) -> IO a
 runX' m = do
     dpy <- openDisplay ""
     let root = defaultRootWindow dpy
-    (ret, st) <- allocaXEvent $ \e -> fillBytes e 0 196 >> runX m (XEnv dpy root e) (XControl mempty False)
+    (ret, st) <- allocaXEvent $ 
+        \e -> fillBytes e 0 196 >> runX m (XEnv dpy root e) (XControl mempty False)
     closeDisplay dpy
     return ret
 
@@ -147,10 +148,16 @@ forkX x = do
     xctrl <- get
     io $ forkIO $ runX x xenv xctrl >> return ()
 
+forkX_ :: X () -> X ()
+forkX_ = (>> return ()) . forkX
+
 forkP :: MonadIO m => IO () -> m ProcessID
 forkP prog = io . forkProcess $ do
     createSession
     prog
+
+forkP_ :: MonadIO m => IO () -> m ()
+forkP_ = (>> return ()) . forkP
 
 spawnPID :: MonadIO m => String -> m ProcessID
 spawnPID prog = forkP $ executeFile "/bin/sh" False ["-c", prog] Nothing
@@ -166,7 +173,7 @@ flushX = do
     XEnv { display = dpy } <- ask
     liftIO $flush dpy
     
-exitX :: X()
+exitX :: X ()
 exitX = do
     s <- get
     put $ s {exitScheduled = True}
@@ -220,8 +227,8 @@ inCurrentPos f = do
     liftIO $ setInputFocus dpy w 0 0
     return ret 
 
-withBindings :: (Bindings -> Bindings) -> X ()
-withBindings f = do
+modifyBindings :: (Bindings -> Bindings) -> X ()
+modifyBindings f = do
     s@XControl { hkMap = b } <- get
     put $ s { hkMap = f b }
 
@@ -255,5 +262,4 @@ hotkey kms act = do
 
 printBindings :: X ()
 printBindings =
-    get >>= liftIO . putStrLn . drawNMap . hkMap
-
+    get >>= liftIO . putStrLn . drawNMap . hkMap 
