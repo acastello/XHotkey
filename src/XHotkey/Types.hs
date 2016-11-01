@@ -169,6 +169,9 @@ instance Enum KM where
     fromEnum (KM up st k) = ((fromEnum up) `shiftL` 59) .|. ((fromIntegral st) `shiftL` 27) .|. fromEnum k
     toEnum n = KM (testBit n 59) (fromIntegral $ n `shiftR` 27 .&. 0xfff) (toEnum $ n .&. 0x7ffffff)
 
+fromChar :: Char -> KM
+fromChar = KM False 0 . KSym . fromIntegral . fromEnum
+
 up_ :: KM -> KM
 up_ (KM _ st k) = KM True st k
 

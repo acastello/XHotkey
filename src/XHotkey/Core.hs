@@ -144,9 +144,11 @@ io = liftIO
 
 forkX :: X () -> X ThreadId
 forkX x = do
-    xenv <- ask
+    xenv@XEnv { currentEvent = ptr } <- ask
     xctrl <- get
-    io $ forkIO $ runX x xenv xctrl >> return ()
+    io $ forkIO $ allocaXEvent $ \ptr' -> do
+        copyBytes ptr' ptr 196 
+        runX x xenv { currentEvent = ptr' } xctrl >> return ()
 
 forkX_ :: X () -> X ()
 forkX_ = (>> return ()) . forkX
@@ -251,15 +253,24 @@ eventToKM' ptr = do
         return $ (0, nullKM)
 
 eventToKM :: XEventPtr -> IO KM
-eventToKM ptr = snd <$> eventToKM' ptr
+eventToKM ptr = snd `liftM` eventToKM' ptr
 
 askKM :: X KM
 askKM = ask >>= io . eventToKM . currentEvent    
 
-hotkey :: [KM] -> X () -> X ()
-hotkey kms act = do
+askKeysym :: X (Maybe KeySym, String)
+askKeysym = do
+    XEnv { currentEvent = ev } <- ask
+    let kev = asKeyEvent ev
+    io $ lookupString kev
+
+bind :: [KM] -> X () -> X ()
+bind kms act = do
     xc@XControl { hkMap = hk, exitScheduled = ext } <- get
     put xc { hkMap = insert kms act hk }
+
+unbind :: [KM] -> X ()
+unbind = modifyBindings . delete
 
 printBindings :: X ()
 printBindings =
