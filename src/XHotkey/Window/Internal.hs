@@ -4,6 +4,8 @@ import XHotkey.Types
 import XHotkey.Core
 
 import Graphics.X11
+import Graphics.X11.Xft
+import Graphics.X11.Xrender
 import Graphics.X11.Xlib.Extras
 
 import Data.Bits
@@ -15,6 +17,7 @@ import Control.Monad.Reader
 import Control.Monad.State
 
 import Foreign
+import Foreign.C
 
 data WinEnv = WinEnv
     { win_dpy   :: Display
@@ -25,6 +28,14 @@ data WinEnv = WinEnv
     , win_strdraw   :: Position -> Position -> String -> XWin ()
     , win_evf   :: IORef ( Event -> XWin () )
     , win_kill  :: Bool
+    }
+
+data WinRes = WinRes
+    { res_bordersize    :: CInt
+    , res_bordercolor   :: Pixel
+    , res_bgcolor       :: Pixel
+    , res_fgcolor       :: Pixel
+    , res_font          :: String
     }
 
 type XWin a = ReaderT WinEnv IO a
@@ -53,58 +64,72 @@ win' = do
         io $ threadDelay 10000000
     io $ takeMVar mvar
 
-win :: XWin a -> X a
-win act = (io initThreads >>) $ copyX $ do
+win :: WinRes -> XWin a -> X a
+win (WinRes bordersz bordercol bgcolor fgcolor fontn) act = (io initThreads >>) $ copyX $ do
     XEnv { display = dpy, rootWindow' = root } <- ask
-    io $ withallocaSetWindowAttributes $ \attr -> do
-        set_background_pixel attr 0x222222
-        set_override_redirect attr True
-        set_event_mask attr (maxBound)
-        window <- createWindow dpy root 1 1 10 10 0 copyFromParent inputOutput 
-            (defaultVisual dpy (defaultScreen dpy)) (cWBackPixel .|. cWOverrideRedirect) attr
-        gc <- createGC dpy window
-        setForeground dpy gc 0xbabdb6
+    let screenn = defaultScreen dpy
+        visual = defaultVisual dpy screenn
+        colormap = defaultColormap dpy screenn
+    io $ 
+        withXftColorValue dpy visual colormap xrc $ \xftcol ->
+        allocaSetWindowAttributes $ \attr -> do
 
-        selectInput dpy window (exposureMask .|. structureNotifyMask)
+    set_background_pixel attr bgcolor
+    set_override_redirect attr True
+    set_border_pixel attr bordercol
 
-        fs <- loadQueryFont dpy "9x15bold"
-        let fo = fontFromFontStruct fs
-            df x y str = io $ drawString dpy window gc x y str 
-            strb str = return (fromIntegral $ ascentFromFontStruct fs, fromIntegral $ descentFromFontStruct fs, fromIntegral $ textWidth fs str)
-        setFont dpy gc fo
+    window <- createWindow dpy root 10 10 10 10 bordersz copyFromParent inputOutput 
+        (defaultVisual dpy (defaultScreen dpy)) (cWBorderPixel .|. cWBackPixel .|. cWOverrideRedirect) attr
+    gc <- createGC dpy window
+    setForeground dpy gc fgcolor
 
-        ev_f <- newIORef $ \ev -> do
-            return ()
-        let env = WinEnv dpy window attr gc strb df ev_f False
-        mv <- newEmptyMVar :: IO (MVar ())
-        mapWindow dpy window
-        flush dpy
-        proc <- io $ forkIO $ allocaXEvent $ \ev -> flip runReaderT env $ do
-            dowhile $ do
-                io $ nextEvent dpy ev
-                ev' <- io $ getEvent ev
-                (io $ readIORef ev_f) >>= ($ ev')
-                return (ev_event_type ev' /= destroyNotify)
-            io $ putMVar mv ()
+    selectInput dpy window (exposureMask .|. structureNotifyMask)
 
-        ret <- runReaderT act env 
-        io $ destroyWindow dpy window
-        flush dpy
-        io $ takeMVar mv
-        return ret
+    xftdraw <- xftDrawCreate dpy window visual colormap
+    xftfont <- xftFontOpen dpy (screenOfDisplay dpy screenn) fontn
+    let df x y str = io $ xftDrawString xftdraw xftcol xftfont x y str
+        strb str = io $ do
+            asc <- fromIntegral <$> xftfont_ascent xftfont
+            desc <- fromIntegral <$> xftfont_descent xftfont
+            width <- fromIntegral <$> xglyphinfo_width <$> xftTextExtents dpy xftfont str 
+            return (asc, desc, width)
+
+    ev_f <- newIORef $ \ev -> do
+        return ()
+    let env = WinEnv dpy window attr gc strb df ev_f False
+    mv <- newEmptyMVar :: IO (MVar ())
+    mapWindow dpy window
+    flush dpy
+    proc <- io $ forkIO $ allocaXEvent $ \ev -> flip runReaderT env $ do
+        dowhile $ do
+            io $ nextEvent dpy ev
+            ev' <- io $ getEvent ev
+            (io $ readIORef ev_f) >>= ($ ev')
+            return (ev_event_type ev' /= destroyNotify)
+        io $ putMVar mv ()
+
+    ret <- runReaderT act env 
+    io $ destroyWindow dpy window
+    flush dpy
+    io $ takeMVar mv
+    return ret
+    where 
+        xrc = XRenderColor (fromIntegral $ fgcolor `shiftR` 16 .&. 0xff * 0x101) 
+            (fromIntegral $ fgcolor `shiftR` 8 .&. 0xff * 0x101) 
+            (fromIntegral $ fgcolor .&. 0xff * 0x101) 0xffff
 
 msgbox :: String -> X ()
-msgbox str = win $ do
+msgbox str = win (WinRes 0 0xbabdb6 0x222222 0xbabdb6 "Inconsolata: pixelsize=30px") $ do
     WinEnv { win_dpy = dpy, win_id = w', win_gc = gc, win_attr = attr, win_strbounds = strb, win_strdraw = drf } <- ask
     (asc,des,wdt) <- strb str
-    (_,_,hpad) <- strb " "
+    (_,_,hpad) <- strb "_"
+    io $ print (wdt,hpad)
     let vpad = des
-    io $ do
-        setWindowBorderWidth dpy w' 2
-        setWindowBorder dpy w' 0xbabdb6
+    when (wdt+2*hpad > 1) $ io $ do
         resizeWindow dpy w' (wdt+2*hpad) (2*vpad+asc+des)
-    drf (fromIntegral hpad) (fromIntegral $ asc + vpad) str
+    drf (fromIntegral hpad-1) (fromIntegral $ asc + vpad) str
     io $ flush dpy
+    io $ print =<< getGeometry dpy w'
     io $ getLine
     return ()
 
