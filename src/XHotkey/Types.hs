@@ -39,7 +39,15 @@ data XControl = XControl
     , exitScheduled :: Bool
     }
 
+data Hook 
+    = OnClear (X ())
+    | OnKM (KM -> X ())
+    | OnExit (X ())
+    | OnGrab (KM -> Bindings -> X ())
+    | OnAction { onAction :: KM -> X () -> X () }
+
 type Bindings = M.NMap KM (X ())
+
 drawBindings :: Bindings -> String
 drawBindings = drawNMap
 

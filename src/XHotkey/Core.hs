@@ -20,6 +20,7 @@ import Foreign
 import Foreign.C
 import qualified Data.List as L
 import qualified Data.Map as M
+import qualified Data.Tree as T
 import Prelude hiding (lookup)
 
 runX :: (X a) -> XEnv -> XControl -> IO (a, XControl)
@@ -34,6 +35,17 @@ runX' m = do
     closeDisplay dpy
     return ret
 
+copyX :: X a -> X a
+copyX act = do
+    XEnv dpy root ev <- ask
+    xctrl <- get
+    io $ allocaXEvent $ \ev' -> do
+        dpy' <- openDisplay (displayString dpy)
+        let root' = defaultRootWindow dpy'
+        ret <- runX act (XEnv dpy' root' ev') xctrl >>= return . fst
+        closeDisplay dpy'
+        return ret
+        
 mainLoop :: X ()
 mainLoop = do
     s@XControl { hkMap = hk } <- get
@@ -174,6 +186,18 @@ flushX :: X ()
 flushX = do
     XEnv { display = dpy } <- ask
     liftIO $flush dpy
+
+windowsTree :: X (T.Tree Window)
+windowsTree = do
+    XEnv { rootWindow' = root } <- ask
+    windowsTree' root
+    where
+        windowsTree' :: Window -> X (T.Tree Window)
+        windowsTree' w = do
+            dpy <- return . display =<< ask
+            wins <- io $ return . (\(_,_,y) -> y) =<< queryTree dpy w 
+            wins' <- traverse windowsTree' wins
+            return $ T.Node w wins'
     
 exitX :: X ()
 exitX = do
