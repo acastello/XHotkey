@@ -16,6 +16,8 @@ import Control.Monad.State
 import Control.Monad.Reader
 
 import Control.Concurrent
+import Control.Exception
+
 import Foreign
 import Foreign.C
 import qualified Data.List as L
@@ -30,10 +32,13 @@ runX' :: (X a) -> IO a
 runX' m = do
     dpy <- openDisplay ""
     let root = defaultRootWindow dpy
-    (ret, st) <- allocaXEvent $ 
-        \e -> fillBytes e 0 196 >> runX m (XEnv dpy root e) (XControl mempty False)
+    ret <- allocaXEvent $ \e -> try $ 
+        fillBytes e 0 196 >> runX m (XEnv dpy root e) 
+        (XControl mempty False) -- :: IO (Either SomeException (a, XControl))
     closeDisplay dpy
-    return ret
+    case ret of
+        Left e -> error $ show (e :: SomeException)
+        Right (ret', _) -> return ret'
 
 copyX :: X a -> X a
 copyX act = do

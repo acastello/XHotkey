@@ -40,29 +40,31 @@ data WinRes = WinRes
 
 type XWin a = ReaderT WinEnv IO a
 
-win' :: X Window
-win' = do
-    XEnv { display = dpy, rootWindow' = root } <- ask
-    mvar <- io $ newEmptyMVar
-    forkX $ copyX $ do
-        XEnv { display = dpy', rootWindow' = root' } <- ask
-        win <- io $ createSimpleWindow dpy' root' 0 0 100 100 0 0 maxBound 
-        fs <- io $ loadQueryFont dpy' "6x13bold"
-        let font = fontFromFontStruct fs
-        gc <- io $ createGC dpy' win
-        io $ do
-            setFont dpy' gc font
-            setForeground dpy' gc 0xff0000
-            mapWindow dpy' =<< createSimpleWindow dpy' win 10 10 20 20 0 maxBound 0
-            mapWindow dpy' win
-            drawString dpy' win gc 5 5 "asd"
-        flushX
-        io $ putMVar mvar win
-        io $ threadDelay 1000000
-        io $ drawString dpy' win gc 0 (ascentFromFontStruct fs) "asd"
-        flushX
-        io $ threadDelay 10000000
-    io $ takeMVar mvar
+data XChan a = XChan (MVar (Either () (XWin a))) (MVar a)
+
+newXChan :: MonadIO m => m (XChan a)
+newXChan = io $ do
+    mv1 <- newEmptyMVar
+    mv2 <- newEmptyMVar
+    return (XChan mv1 mv2)
+
+closeXChan :: MonadIO m => XChan a -> m ()
+closeXChan (XChan v1 _) = io $ do
+    putMVar v1 (Left ())
+
+evalXChan :: MonadIO m => XChan a -> XWin a -> m a
+evalXChan (XChan v1 v2) action = io $ do
+    putMVar v1 (Right action)
+    takeMVar v2 
+
+runXChan :: MonadIO m => XChan a -> (XWin a -> m a) -> m ()
+runXChan (XChan mv1 mv2) handle = do
+    par <- io $ takeMVar mv1
+    case par of
+        Left _ -> fail "XChan is closed"
+        Right par' -> do
+            res <- handle par'
+            io $ putMVar mv2 res
 
 win :: WinRes -> XWin a -> X a
 win (WinRes bordersz bordercol bgcolor fgcolor fontn) act = (io initThreads >>) $ copyX $ do
@@ -118,18 +120,23 @@ win (WinRes bordersz bordercol bgcolor fgcolor fontn) act = (io initThreads >>) 
             (fromIntegral $ fgcolor `shiftR` 8 .&. 0xff * 0x101) 
             (fromIntegral $ fgcolor .&. 0xff * 0x101) 0xffff
 
+parWin :: WinRes -> X (XChan a)
+parWin res = do
+    x <- newXChan
+    forkX_ $ win res (forever $ runXChan x (\act -> (io $ print 1) >> act >>= return))
+    io $ print 1
+    return x
+
 msgbox :: String -> X ()
-msgbox str = win (WinRes 0 0xbabdb6 0x222222 0xbabdb6 "Inconsolata: pixelsize=30px") $ do
+msgbox str = win (WinRes 2 0xbabdb6 0x222222 0xbabdb6 "Inconsolata: bold: pixelsize=15px") $ do
     WinEnv { win_dpy = dpy, win_id = w', win_gc = gc, win_attr = attr, win_strbounds = strb, win_strdraw = drf } <- ask
     (asc,des,wdt) <- strb str
     (_,_,hpad) <- strb "_"
-    io $ print (wdt,hpad)
     let vpad = des
     when (wdt+2*hpad > 1) $ io $ do
         resizeWindow dpy w' (wdt+2*hpad) (2*vpad+asc+des)
-    drf (fromIntegral hpad-1) (fromIntegral $ asc + vpad) str
+    drf (fromIntegral hpad) (fromIntegral $ asc + vpad) str
     io $ flush dpy
-    io $ print =<< getGeometry dpy w'
     io $ getLine
     return ()
 
