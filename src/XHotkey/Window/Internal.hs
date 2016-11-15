@@ -26,7 +26,7 @@ data WinEnv = WinEnv
     , win_attr  :: Ptr SetWindowAttributes
     , win_gc    :: GC
     , win_strbounds :: String -> XWin (Dimension, Dimension, Dimension)
-    , win_strdraw   :: Position -> Position -> String -> XWin ()
+    , win_putstr   :: Position -> Position -> String -> XWin ()
     , win_evf   :: IORef ( Event -> XWin () )
     , win_kill  :: Bool
     }
@@ -41,6 +41,12 @@ data WinRes = WinRes
 
 type XWin a = ReaderT WinEnv IO a
 
+putStrTL :: Position -> Position -> String -> XWin ()
+putStrTL x y str = do
+    wenv <- ask
+    (asc, _, _) <- (win_strbounds wenv) str
+    (win_putstr wenv) x (y- (fromIntegral asc)) str
+
 data XChan a = XChan (MVar (Either () (XWin a))) (MVar a)
 
 newXChan :: MonadIO m => m (XChan a)
@@ -52,6 +58,8 @@ newXChan = io $ do
 closeXChan :: MonadIO m => XChan a -> m ()
 closeXChan (XChan v1 _) = io $ do
     putMVar v1 (Left ())
+    tryTakeMVar v1
+    return ()
 
 evalXChan :: MonadIO m => XChan a -> XWin a -> m a
 evalXChan (XChan v1 v2) action = io $ do
@@ -95,7 +103,7 @@ win (WinRes bordersz bordercol bgcolor fgcolor fontn) act = (io initThreads >>) 
         strb str = io $ do
             asc <- fromIntegral <$> xftfont_ascent xftfont
             desc <- fromIntegral <$> xftfont_descent xftfont
-            width <- fromIntegral <$> xglyphinfo_width <$> xftTextExtents dpy xftfont str 
+            width <- fromIntegral <$> xglyphinfo_width <$> xftTextExtents dpy xftfont (str++" ")
             return (asc, desc, width)
 
     ev_f <- newIORef $ \ev -> do
@@ -130,7 +138,7 @@ parWin res = do
 
 msgbox :: String -> X ()
 msgbox str = win (WinRes 2 0xbabdb6 0x222222 0xbabdb6 "Inconsolata: bold: pixelsize=15px") $ do
-    WinEnv { win_dpy = dpy, win_id = w', win_gc = gc, win_attr = attr, win_strbounds = strb, win_strdraw = drf } <- ask
+    WinEnv { win_dpy = dpy, win_id = w', win_gc = gc, win_attr = attr, win_strbounds = strb, win_putstr = drf } <- ask
     (asc,des,wdt) <- strb str
     (_,_,hpad) <- strb "_"
     let vpad = des
@@ -145,10 +153,17 @@ parMsgbox :: WinRes -> X (XChan String)
 parMsgbox res = do
     parWin res
 
-writeMsg :: MonadIO m => XChan String -> m ()
-writeMsg xc = do
+writeMsg :: MonadIO m => XChan String -> String -> m ()
+writeMsg xc str = do
+    evalXChan xc $ do
+        WinEnv { win_dpy = dpy, win_putstr = putstr, win_strbounds = strext, win_id = wid } <- ask
+        (asc, des, width) <- strext str
+        io $ resizeWindow dpy wid (width) (asc + des)
+        io $ flush dpy
+        putstr 0 (fromIntegral asc) str
+        io $ flush dpy
+        return str
     return ()
-
 
 dowhile :: Monad m => m Bool -> m ()
 dowhile act = do
