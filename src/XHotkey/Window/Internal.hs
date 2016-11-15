@@ -13,6 +13,7 @@ import Data.IORef
 
 import Control.Concurrent
 import Control.Exception
+import Control.Monad.Except
 import Control.Monad.Reader
 import Control.Monad.State
 
@@ -57,14 +58,15 @@ evalXChan (XChan v1 v2) action = io $ do
     putMVar v1 (Right action)
     takeMVar v2 
 
-runXChan :: MonadIO m => XChan a -> (XWin a -> m a) -> m ()
+runXChan :: MonadIO m => XChan a -> (XWin a -> m a) -> m Bool
 runXChan (XChan mv1 mv2) handle = do
     par <- io $ takeMVar mv1
     case par of
-        Left _ -> fail "XChan is closed"
+        Left _ -> return False
         Right par' -> do
             res <- handle par'
             io $ putMVar mv2 res
+            return True
 
 win :: WinRes -> XWin a -> X a
 win (WinRes bordersz bordercol bgcolor fgcolor fontn) act = (io initThreads >>) $ copyX $ do
@@ -123,8 +125,7 @@ win (WinRes bordersz bordercol bgcolor fgcolor fontn) act = (io initThreads >>) 
 parWin :: WinRes -> X (XChan a)
 parWin res = do
     x <- newXChan
-    forkX_ $ win res (forever $ runXChan x (\act -> (io $ print 1) >> act >>= return))
-    io $ print 1
+    forkX_ $ win res $ dowhile $ runXChan x id
     return x
 
 msgbox :: String -> X ()
@@ -138,6 +139,14 @@ msgbox str = win (WinRes 2 0xbabdb6 0x222222 0xbabdb6 "Inconsolata: bold: pixels
     drf (fromIntegral hpad) (fromIntegral $ asc + vpad) str
     io $ flush dpy
     io $ getLine
+    return ()
+
+parMsgbox :: WinRes -> X (XChan String)
+parMsgbox res = do
+    parWin res
+
+writeMsg :: MonadIO m => XChan String -> m ()
+writeMsg xc = do
     return ()
 
 
