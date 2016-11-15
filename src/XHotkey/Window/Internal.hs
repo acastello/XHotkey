@@ -20,6 +20,10 @@ import Control.Monad.State
 import Foreign
 import Foreign.C
 
+import qualified Data.Map as M
+
+type EventCB = Event -> XWin ()
+
 data WinEnv = WinEnv
     { win_dpy   :: Display
     , win_id    :: Window
@@ -27,7 +31,7 @@ data WinEnv = WinEnv
     , win_gc    :: GC
     , win_strbounds :: String -> XWin (Dimension, Dimension, Dimension)
     , win_putstr   :: Position -> Position -> String -> XWin ()
-    , win_evf   :: IORef ( Event -> XWin () )
+    , win_evmap   :: IORef (M.Map EventType EventCB)
     , win_kill  :: Bool
     }
 
@@ -47,34 +51,59 @@ putStrTL x y str = do
     (asc, _, _) <- (win_strbounds wenv) str
     (win_putstr wenv) x (y- (fromIntegral asc)) str
 
-data XChan a = XChan (MVar (Either () (XWin a))) (MVar a)
+setEventCB :: EventType -> EventCB -> XWin ()
+setEventCB typ fun = do
+    WinEnv { win_evmap = evmap } <- ask
+    io $ modifyIORef' evmap (M.insert typ fun)
+
+hideWin :: EventCB
+hideWin _ = do
+    WinEnv { win_dpy = dpy, win_id = wid } <- ask
+    io $ unmapWindow dpy wid
+    io $ flush dpy 
+
+data MChan m a = XChan (MVar (Either () (m a))) (MVar a) (IORef Bool)
+type XChan a = MChan (XWin) a
 
 newXChan :: MonadIO m => m (XChan a)
 newXChan = io $ do
     mv1 <- newEmptyMVar
     mv2 <- newEmptyMVar
-    return (XChan mv1 mv2)
+    running <- newIORef True
+    return (XChan mv1 mv2 running)
 
 closeXChan :: MonadIO m => XChan a -> m ()
-closeXChan (XChan v1 _) = io $ do
-    putMVar v1 (Left ())
-    tryTakeMVar v1
-    return ()
+closeXChan (XChan v1 _ st) = io $ do
+    running <- readIORef st
+    if running then do
+        putMVar v1 (Left ())
+        writeIORef st False
+    else do
+        tryPutMVar v1 (Left ()) 
+        return ()
 
 evalXChan :: MonadIO m => XChan a -> XWin a -> m a
-evalXChan (XChan v1 v2) action = io $ do
-    putMVar v1 (Right action)
-    takeMVar v2 
+evalXChan (XChan v1 v2 st) action = io $ do
+    running <- readIORef st
+    if running then do
+        putMVar v1 (Right action)
+        takeMVar v2 
+    else
+        error "XChan is closed."
 
 runXChan :: MonadIO m => XChan a -> (XWin a -> m a) -> m Bool
-runXChan (XChan mv1 mv2) handle = do
-    par <- io $ takeMVar mv1
-    case par of
-        Left _ -> return False
-        Right par' -> do
-            res <- handle par'
-            io $ putMVar mv2 res
-            return True
+runXChan (XChan mv1 mv2 st) handle = do
+    running <- io $ readIORef st
+    if running then do
+        par <- io $ takeMVar mv1
+        case par of
+            Left _ -> return False
+            Right par' -> do
+                res <- handle par'
+                io $ putMVar mv2 res
+                return True
+    else
+        return False
 
 win :: WinRes -> XWin a -> X a
 win (WinRes bordersz bordercol bgcolor fgcolor fontn) act = (io initThreads >>) $ copyX $ do
@@ -95,7 +124,7 @@ win (WinRes bordersz bordercol bgcolor fgcolor fontn) act = (io initThreads >>) 
     gc <- createGC dpy window
     setForeground dpy gc fgcolor
 
-    selectInput dpy window (exposureMask .|. structureNotifyMask)
+    selectInput dpy window (exposureMask .|. structureNotifyMask .|. buttonPressMask)
 
     xftdraw <- xftDrawCreate dpy window visual colormap
     xftfont <- xftFontOpen dpy (screenOfDisplay dpy screenn) fontn
@@ -103,11 +132,10 @@ win (WinRes bordersz bordercol bgcolor fgcolor fontn) act = (io initThreads >>) 
         strb str = io $ do
             asc <- fromIntegral <$> xftfont_ascent xftfont
             desc <- fromIntegral <$> xftfont_descent xftfont
-            width <- fromIntegral <$> xglyphinfo_width <$> xftTextExtents dpy xftfont (str++" ")
+            width <- fromIntegral <$> xglyphinfo_width <$> xftTextExtents dpy xftfont (str)
             return (asc, desc, width)
 
-    ev_f <- newIORef $ \ev -> do
-        return ()
+    ev_f <- newIORef mempty
     let env = WinEnv dpy window attr gc strb df ev_f False
     mv <- newEmptyMVar :: IO (MVar ())
     mapWindow dpy window
@@ -116,7 +144,8 @@ win (WinRes bordersz bordercol bgcolor fgcolor fontn) act = (io initThreads >>) 
         dowhile $ do
             io $ nextEvent dpy ev
             ev' <- io $ getEvent ev
-            (io $ readIORef ev_f) >>= ($ ev')
+            f <- io $ readIORef ev_f
+            maybe (return ()) ($ ev') $ M.lookup (ev_event_type ev') f 
             return (ev_event_type ev' /= destroyNotify)
         io $ putMVar mv ()
 
@@ -149,21 +178,35 @@ msgbox str = win (WinRes 2 0xbabdb6 0x222222 0xbabdb6 "Inconsolata: bold: pixels
     io $ getLine
     return ()
 
-parMsgbox :: WinRes -> X (XChan String)
+parMsgbox :: WinRes -> X (XChan ())
 parMsgbox res = do
-    parWin res
+    xc <- parWin res
+    evalXChan xc $ do
+        WinEnv { win_dpy = dpy, win_id = wid } <- ask
+        setEventCB buttonPress hideWin
+        io $ unmapWindow dpy wid
+        io $ flush dpy
+    return xc
 
-writeMsg :: MonadIO m => XChan String -> String -> m ()
+writeMsg :: MonadIO m => XChan () -> String -> m ()
+writeMsg xc "" = do
+    evalXChan xc $ do
+        WinEnv { win_dpy = dpy, win_id = wid } <- ask
+        io $ do
+            unmapWindow dpy wid
+            flush dpy
+    return () 
 writeMsg xc str = do
     evalXChan xc $ do
         WinEnv { win_dpy = dpy, win_putstr = putstr, win_strbounds = strext, win_id = wid } <- ask
         (asc, des, width) <- strext str
-        io $ resizeWindow dpy wid (width) (asc + des)
+        io $ do
+            mapWindow dpy wid
+            resizeWindow dpy wid (width+2) (asc + des + 2)
+            clearWindow dpy wid
+            flush dpy
+        putstr 1 (1 + fromIntegral asc) str
         io $ flush dpy
-        putstr 0 (fromIntegral asc) str
-        io $ flush dpy
-        return str
-    return ()
 
 dowhile :: Monad m => m Bool -> m ()
 dowhile act = do
