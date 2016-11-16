@@ -22,58 +22,19 @@ import Foreign.C
 
 import qualified Data.Map as M
 
-type EventCB = Event -> XWin ()
 
-data WinEnv = WinEnv
-    { win_dpy   :: Display
-    , win_id    :: Window
-    , win_attr  :: Ptr SetWindowAttributes
-    , win_gc    :: GC
-    , win_strbounds :: String -> XWin (Dimension, Dimension, Dimension)
-    , win_putstr   :: Position -> Position -> String -> XWin ()
-    , win_evmap   :: IORef (M.Map EventType EventCB)
-    , win_kill  :: Bool
-    }
+data MChan m a = MChan_ (MVar (Either () (m a))) (MVar a) (IORef Bool)
+type XChan = MChan XWin 
 
-data WinRes = WinRes
-    { res_bordersize    :: CInt
-    , res_bordercolor   :: Pixel
-    , res_bgcolor       :: Pixel
-    , res_fgcolor       :: Pixel
-    , res_font          :: String
-    }
-
-type XWin a = ReaderT WinEnv IO a
-
-putStrTL :: Position -> Position -> String -> XWin ()
-putStrTL x y str = do
-    wenv <- ask
-    (asc, _, _) <- (win_strbounds wenv) str
-    (win_putstr wenv) x (y- (fromIntegral asc)) str
-
-setEventCB :: EventType -> EventCB -> XWin ()
-setEventCB typ fun = do
-    WinEnv { win_evmap = evmap } <- ask
-    io $ modifyIORef' evmap (M.insert typ fun)
-
-hideWin :: EventCB
-hideWin _ = do
-    WinEnv { win_dpy = dpy, win_id = wid } <- ask
-    io $ unmapWindow dpy wid
-    io $ flush dpy 
-
-data MChan m a = XChan (MVar (Either () (m a))) (MVar a) (IORef Bool)
-type XChan a = MChan (XWin) a
-
-newXChan :: MonadIO m => m (XChan a)
-newXChan = io $ do
+newMChan :: (MonadIO m, MonadIO m') => m' (MChan m a)
+newMChan = io $ do
     mv1 <- newEmptyMVar
     mv2 <- newEmptyMVar
     running <- newIORef True
-    return (XChan mv1 mv2 running)
+    return (MChan_ mv1 mv2 running)
 
-closeXChan :: MonadIO m => XChan a -> m ()
-closeXChan (XChan v1 _ st) = io $ do
+closeMChan :: (MonadIO m, MonadIO m') => MChan m a -> m' ()
+closeMChan (MChan_ v1 _ st) = io $ do
     running <- readIORef st
     if running then do
         putMVar v1 (Left ())
@@ -82,17 +43,17 @@ closeXChan (XChan v1 _ st) = io $ do
         tryPutMVar v1 (Left ()) 
         return ()
 
-evalXChan :: MonadIO m => XChan a -> XWin a -> m a
-evalXChan (XChan v1 v2 st) action = io $ do
+evalMChan :: (MonadIO m, MonadIO m') => MChan m a -> m a -> m' a
+evalMChan (MChan v1 v2 st) action = io $ do
     running <- readIORef st
     if running then do
         putMVar v1 (Right action)
         takeMVar v2 
     else
-        error "XChan is closed."
+        error "MChan is closed."
 
-runXChan :: MonadIO m => XChan a -> (XWin a -> m a) -> m Bool
-runXChan (XChan mv1 mv2 st) handle = do
+runMChan :: (MonadIO m, MonadIO m') => MChan m a -> (m a -> m' a) -> m' Bool
+runMChan (MChan mv1 mv2 st) handle = do
     running <- io $ readIORef st
     if running then do
         par <- io $ takeMVar mv1
@@ -104,6 +65,18 @@ runXChan (XChan mv1 mv2 st) handle = do
                 return True
     else
         return False
+
+newXChan :: MonadIO m => m (XChan a)
+newXChan = newMChan
+
+closeXChan :: MonadIO m => XChan a -> m ()
+closeXChan = closeMChan
+
+evalXChan :: MonadIO m => XChan a -> XWin a -> m a
+evalXChan = evalMChan
+
+runXChan :: MonadIO m => XChan a -> (XWin a -> m a) -> m Bool
+runXChan = runMChan
 
 win :: WinRes -> XWin a -> X a
 win (WinRes bordersz bordercol bgcolor fgcolor fontn) act = (io initThreads >>) $ copyX $ do
