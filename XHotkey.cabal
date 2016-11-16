@@ -13,9 +13,12 @@ library
     exposed-modules:    XHotkey
                         XHotkey.Types
                         XHotkey.Core 
+                        XHotkey.Window 
+    other-modules:  XHotkey.Window.Internal
+    extensions:     DoAndIfThenElse
     build-depends:      base,
                         unix,
-                        X11,
+                        X11, X11-xft,
                         mtl >= 2.0,
                         containers,
                         NMap

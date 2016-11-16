@@ -1,8 +1,24 @@
-module XHotkey.Window where
+module XHotkey.Window 
+-- typesym for the function used in win_evmap callbacks
+    ( EventCB
+-- X resources used for windows
+    , WinRes, res_bordersize, res_bordercolor, res_bgcolor, res_fgcolor, res_font
+-- concurrently-accesible window structures and routines
+    , WinEnv, win_dpy, win_id, win_attr, win_gc, win_strbounds, win_putstr
+    , win_evmap
+-- ReaderT typesym around WinEnv
+    , XWin
+-- closeable MonadIO evaluation channel, and corresponding XWin typesym
+    , MChan, newMChan, closeMChan, evalMChan, runMChan
+    , WChan, newWChan, closeWChan, evalWChan, runWChan
+-- miriad of functions
+    , putStrTL, setEventCB, win, msgbox, parWin, parMsgbox, writeMsg
+    ) where
+
 
 import XHotkey.Types
 import XHotkey.Core
-import XHotkey.Window.Internal
+import XHotkey.Internal
 
 import Graphics.X11
 import Graphics.X11.Xft
@@ -30,7 +46,6 @@ data WinEnv = WinEnv
     , win_strbounds :: String -> XWin (Dimension, Dimension, Dimension)
     , win_putstr    :: Position -> Position -> String -> XWin ()
     , win_evmap     :: IORef (M.Map EventType EventCB)
-    , win_kill      :: Bool
     }
 
 data WinRes = WinRes
@@ -60,19 +75,19 @@ hideWin _ = do
     io $ unmapWindow dpy wid
     io $ flush dpy 
 
-type WinChan = MChan XWin 
+type WChan = MChan XWin 
 
-newWinChan :: MonadIO m => m (WinChan a)
-newWinChan = newMChan
+newWChan :: MonadIO m => m (WChan a)
+newWChan = newMChan
 
-closeWinChan :: MonadIO m => WinChan a -> m ()
-closeWinChan = closeMChan
+closeWChan :: MonadIO m => WChan a -> m ()
+closeWChan = closeMChan
 
-evalWinChan :: MonadIO m => WinChan a -> XWin a -> m a
-evalWinChan = evalMChan
+evalWChan :: MonadIO m => WChan a -> XWin a -> m a
+evalWChan = evalMChan
 
-runWinChan :: MonadIO m => WinChan a -> (XWin a -> m a) -> m Bool
-runWinChan = runMChan
+runWChan :: MonadIO m => WChan a -> (XWin a -> m a) -> m Bool
+runWChan = runMChan
 
 win :: WinRes -> XWin a -> X a
 win (WinRes bordersz bordercol bgcolor fgcolor fontn) act = (io initThreads >>) $ copyX $ do
@@ -105,7 +120,7 @@ win (WinRes bordersz bordercol bgcolor fgcolor fontn) act = (io initThreads >>) 
             return (asc, desc, width)
 
     ev_f <- newIORef mempty
-    let env = WinEnv dpy window attr gc strb df ev_f False
+    let env = WinEnv dpy window attr gc strb df ev_f 
     mv <- newEmptyMVar :: IO (MVar ())
     mapWindow dpy window
     flush dpy
@@ -128,10 +143,10 @@ win (WinRes bordersz bordercol bgcolor fgcolor fontn) act = (io initThreads >>) 
             (fromIntegral $ fgcolor `shiftR` 8 .&. 0xff * 0x101) 
             (fromIntegral $ fgcolor .&. 0xff * 0x101) 0xffff
 
-parWin :: WinRes -> X (WinChan a)
+parWin :: WinRes -> X (WChan a)
 parWin res = do
-    x <- newWinChan
-    forkX_ $ win res $ dowhile $ runWinChan x id
+    x <- newWChan
+    forkX_ $ win res $ dowhile $ runWChan x id
     return x
 
 msgbox :: String -> X ()
@@ -147,26 +162,26 @@ msgbox str = win (WinRes 2 0xbabdb6 0x222222 0xbabdb6 "Inconsolata: bold: pixels
     io $ getLine
     return ()
 
-parMsgbox :: WinRes -> X (WinChan ())
+parMsgbox :: WinRes -> X (WChan ())
 parMsgbox res = do
     xc <- parWin res
-    evalWinChan xc $ do
+    evalWChan xc $ do
         WinEnv { win_dpy = dpy, win_id = wid } <- ask
         setEventCB buttonPress hideWin
         io $ unmapWindow dpy wid
         io $ flush dpy
     return xc
 
-writeMsg :: MonadIO m => WinChan () -> String -> m ()
+writeMsg :: MonadIO m => WChan () -> String -> m ()
 writeMsg xc "" = do
-    evalWinChan xc $ do
+    evalWChan xc $ do
         WinEnv { win_dpy = dpy, win_id = wid } <- ask
         io $ do
             unmapWindow dpy wid
             flush dpy
     return () 
 writeMsg xc str = do
-    evalWinChan xc $ do
+    evalWChan xc $ do
         WinEnv { win_dpy = dpy, win_putstr = putstr, win_strbounds = strext, win_id = wid } <- ask
         (asc, des, width) <- strext str
         io $ do

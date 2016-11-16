@@ -1,4 +1,4 @@
-module XHotkey.Window.Internal where
+module XHotkey.Internal where
 
 import XHotkey.Types
 import XHotkey.Core
@@ -25,14 +25,14 @@ import qualified Data.Map as M
 
 data MChan m a = MChan_ (MVar (Either () (m a))) (MVar a) (IORef Bool)
 
-newMChan :: (MonadIO m, MonadIO m') => m' (MChan m a)
+newMChan :: MonadIO m' => m' (MChan m a)
 newMChan = io $ do
     mv1 <- newEmptyMVar
     mv2 <- newEmptyMVar
     running <- newIORef True
     return (MChan_ mv1 mv2 running)
 
-closeMChan :: (MonadIO m, MonadIO m') => MChan m a -> m' ()
+closeMChan :: MonadIO m' => MChan m a -> m' ()
 closeMChan (MChan_ v1 _ st) = io $ do
     running <- readIORef st
     if running then do
@@ -42,7 +42,7 @@ closeMChan (MChan_ v1 _ st) = io $ do
         tryPutMVar v1 (Left ()) 
         return ()
 
-evalMChan :: (MonadIO m, MonadIO m') => MChan m a -> m a -> m' a
+evalMChan :: MonadIO m' => MChan m a -> m a -> m' a
 evalMChan (MChan_ v1 v2 st) action = io $ do
     running <- readIORef st
     if running then do
@@ -51,7 +51,7 @@ evalMChan (MChan_ v1 v2 st) action = io $ do
     else
         error "MChan is closed."
 
-runMChan :: (MonadIO m, MonadIO m') => MChan m a -> (m a -> m' a) -> m' Bool
+runMChan :: MonadIO m' => MChan m a -> (m a -> m' a) -> m' Bool
 runMChan (MChan_ mv1 mv2 st) handle = do
     running <- io $ readIORef st
     if running then do
@@ -59,8 +59,8 @@ runMChan (MChan_ mv1 mv2 st) handle = do
         case par of
             Left _ -> return False
             Right par' -> do
-                res <- handle par'
-                io $ putMVar mv2 res
+                result <- handle par'
+                io $ putMVar mv2 result
                 return True
     else
         return False
