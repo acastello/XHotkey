@@ -12,6 +12,13 @@ import Graphics.X11.Xlib.Extras
 import Control.Concurrent
 import Control.Monad.Reader
 
+import Data.Bits
+import Data.IORef
+
+import Foreign
+import Foreign.C
+
+import qualified Data.Map as M
 
 type EventCB = Event -> XWin ()
 
@@ -53,60 +60,19 @@ hideWin _ = do
     io $ unmapWindow dpy wid
     io $ flush dpy 
 
-data MChan m a = MChan (MVar (Either () (m a))) (MVar a) (IORef Bool)
-type XChan = MChan XWin 
+type WinChan = MChan XWin 
 
-newMChan :: (MonadIO m, MonadIO m') => m' (MChan m a)
-newMChan = io $ do
-    mv1 <- newEmptyMVar
-    mv2 <- newEmptyMVar
-    running <- newIORef True
-    return (MChan mv1 mv2 running)
+newWinChan :: MonadIO m => m (WinChan a)
+newWinChan = newMChan
 
-closeMChan :: (MonadIO m, MonadIO m') => MChan m a -> m' ()
-closeMChan (MChan v1 _ st) = io $ do
-    running <- readIORef st
-    if running then do
-        putMVar v1 (Left ())
-        writeIORef st False
-    else do
-        tryPutMVar v1 (Left ()) 
-        return ()
+closeWinChan :: MonadIO m => WinChan a -> m ()
+closeWinChan = closeMChan
 
-evalMChan :: (MonadIO m, MonadIO m') => MChan m a -> m a -> m' a
-evalMChan (MChan v1 v2 st) action = io $ do
-    running <- readIORef st
-    if running then do
-        putMVar v1 (Right action)
-        takeMVar v2 
-    else
-        error "MChan is closed."
+evalWinChan :: MonadIO m => WinChan a -> XWin a -> m a
+evalWinChan = evalMChan
 
-runMChan :: (MonadIO m, MonadIO m') => MChan m a -> (m a -> m' a) -> m' Bool
-runMChan (MChan mv1 mv2 st) handle = do
-    running <- io $ readIORef st
-    if running then do
-        par <- io $ takeMVar mv1
-        case par of
-            Left _ -> return False
-            Right par' -> do
-                res <- handle par'
-                io $ putMVar mv2 res
-                return True
-    else
-        return False
-
-newXChan :: MonadIO m => m (XChan a)
-newXChan = newMChan
-
-closeXChan :: MonadIO m => XChan a -> m ()
-closeXChan = closeMChan
-
-evalXChan :: MonadIO m => XChan a -> XWin a -> m a
-evalXChan = evalMChan
-
-runXChan :: MonadIO m => XChan a -> (XWin a -> m a) -> m Bool
-runXChan = runMChan
+runWinChan :: MonadIO m => WinChan a -> (XWin a -> m a) -> m Bool
+runWinChan = runMChan
 
 win :: WinRes -> XWin a -> X a
 win (WinRes bordersz bordercol bgcolor fgcolor fontn) act = (io initThreads >>) $ copyX $ do
@@ -162,10 +128,10 @@ win (WinRes bordersz bordercol bgcolor fgcolor fontn) act = (io initThreads >>) 
             (fromIntegral $ fgcolor `shiftR` 8 .&. 0xff * 0x101) 
             (fromIntegral $ fgcolor .&. 0xff * 0x101) 0xffff
 
-parWin :: WinRes -> X (XChan a)
+parWin :: WinRes -> X (WinChan a)
 parWin res = do
-    x <- newXChan
-    forkX_ $ win res $ dowhile $ runXChan x id
+    x <- newWinChan
+    forkX_ $ win res $ dowhile $ runWinChan x id
     return x
 
 msgbox :: String -> X ()
@@ -181,26 +147,26 @@ msgbox str = win (WinRes 2 0xbabdb6 0x222222 0xbabdb6 "Inconsolata: bold: pixels
     io $ getLine
     return ()
 
-parMsgbox :: WinRes -> X (XChan ())
+parMsgbox :: WinRes -> X (WinChan ())
 parMsgbox res = do
     xc <- parWin res
-    evalXChan xc $ do
+    evalWinChan xc $ do
         WinEnv { win_dpy = dpy, win_id = wid } <- ask
         setEventCB buttonPress hideWin
         io $ unmapWindow dpy wid
         io $ flush dpy
     return xc
 
-writeMsg :: MonadIO m => XChan () -> String -> m ()
+writeMsg :: MonadIO m => WinChan () -> String -> m ()
 writeMsg xc "" = do
-    evalXChan xc $ do
+    evalWinChan xc $ do
         WinEnv { win_dpy = dpy, win_id = wid } <- ask
         io $ do
             unmapWindow dpy wid
             flush dpy
     return () 
 writeMsg xc str = do
-    evalXChan xc $ do
+    evalWinChan xc $ do
         WinEnv { win_dpy = dpy, win_putstr = putstr, win_strbounds = strext, win_id = wid } <- ask
         (asc, des, width) <- strext str
         io $ do
