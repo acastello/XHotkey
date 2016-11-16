@@ -64,6 +64,22 @@ putStrTL x y str = do
     (asc, _, _) <- (win_strbounds wenv) str
     (win_putstr wenv) x (y- (fromIntegral asc)) str
 
+data TextJustify = LeftJ | RightJ | Centered | Filled
+
+strBounds :: String -> XWin (Dimension, Dimension, Dimension)
+strBounds "" = ask >>= ($ "") . win_strbounds
+strBounds str = do
+    WinEnv { win_strbounds = strb } <- ask
+    let valid = lines str
+        n = fromIntegral $ length valid
+    width <- maximum . (fmap (\(_,_,t) -> t)) <$> traverse strb valid
+    (asc, des, _) <- strb ""
+    return (asc, n*des + (n-1)*asc, width)
+
+putStrJ :: TextJustify -> Position -> Position -> String -> XWin ()
+putStrJ LeftJ x y str = do
+    
+
 setEventCB :: EventType -> EventCB -> XWin ()
 setEventCB typ fun = do
     WinEnv { win_evmap = evmap } <- ask
@@ -120,9 +136,9 @@ win (WinRes bordersz bordercol bgcolor fgcolor fontn) act = (io initThreads >>) 
             width <- fromIntegral <$> xglyphinfo_width <$> 
                 xftTextExtents dpy xftfont (str)
             return (asc, desc, width)
-    xftTextExtents dpy xftfont "_" >>= \gi -> print (xglyphinfo_width gi, 
-        xglyphinfo_height gi, xglyphinfo_x gi, xglyphinfo_y gi, xglyphinfo_xOff gi,
-        xglyphinfo_yOff gi)
+    -- xftTextExtents dpy xftfont "_" >>= \gi -> print (xglyphinfo_width gi, 
+        -- xglyphinfo_height gi, xglyphinfo_x gi, xglyphinfo_y gi, xglyphinfo_xOff gi,
+        -- xglyphinfo_yOff gi)
 
     ev_f <- newIORef mempty
     let env = WinEnv dpy window attr gc strb df ev_f 
@@ -189,13 +205,17 @@ writeMsg xc str = do
     evalWChan xc $ do
         WinEnv { win_dpy = dpy, win_putstr = putstr, win_strbounds = strext, win_id = wid } <- ask
         (asc, des, width) <- strext str
+        io $ clearWindow dpy wid
+        putstr 1 (1 + fromIntegral asc) str
         io $ do
             mapWindow dpy wid
             resizeWindow dpy wid (width+2) (asc + des + 2)
-            clearWindow dpy wid
             flush dpy
-        putstr 1 (1 + fromIntegral asc) str
         io $ flush dpy
+
+-- various utility functions
+mapWithN :: Monad m => (a -> Int -> m ()) -> [a] -> m ()
+mapWithN f xs = foldr (f) (return 0) xs >> return ()
 
 dowhile :: Monad m => m Bool -> m ()
 dowhile act = do
