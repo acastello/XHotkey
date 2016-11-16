@@ -104,7 +104,8 @@ win (WinRes bordersz bordercol bgcolor fgcolor fontn) act = (io initThreads >>) 
     set_border_pixel attr bordercol
 
     window <- createWindow dpy root 10 10 10 10 bordersz copyFromParent inputOutput 
-        (defaultVisual dpy (defaultScreen dpy)) (cWBorderPixel .|. cWBackPixel .|. cWOverrideRedirect) attr
+        (defaultVisual dpy (defaultScreen dpy)) 
+        (cWBorderPixel .|. cWBackPixel .|. cWOverrideRedirect) attr
     gc <- createGC dpy window
     setForeground dpy gc fgcolor
 
@@ -116,8 +117,12 @@ win (WinRes bordersz bordercol bgcolor fgcolor fontn) act = (io initThreads >>) 
         strb str = io $ do
             asc <- fromIntegral <$> xftfont_ascent xftfont
             desc <- fromIntegral <$> xftfont_descent xftfont
-            width <- fromIntegral <$> xglyphinfo_width <$> xftTextExtents dpy xftfont (str)
+            width <- fromIntegral <$> xglyphinfo_width <$> 
+                xftTextExtents dpy xftfont (str)
             return (asc, desc, width)
+    xftTextExtents dpy xftfont "_" >>= \gi -> print (xglyphinfo_width gi, 
+        xglyphinfo_height gi, xglyphinfo_x gi, xglyphinfo_y gi, xglyphinfo_xOff gi,
+        xglyphinfo_yOff gi)
 
     ev_f <- newIORef mempty
     let env = WinEnv dpy window attr gc strb df ev_f 
