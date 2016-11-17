@@ -78,6 +78,19 @@ strBounds str = do
 
 putStrJ :: TextJustify -> Position -> Position -> String -> XWin ()
 putStrJ LeftJ x y str = do
+    WinEnv { win_putstr = pstr, win_strbounds = strb } <- ask
+    (asc, des, _) <- strb ""
+    foldMapN (\s' n -> 
+        pstr x (y+n*(fromIntegral $ asc+des)) s') (lines str)
+putStrJ RightJ x y str = do
+    WinEnv { win_putstr = pstr, win_strbounds = strb } <- ask
+    (asc, des, _) <- strb ""
+    let lns = lines str
+        hei = fromIntegral $ asc + des
+    (_,_, mw) <- strBounds str
+    foldMapN (\s' n -> do
+        (_,_,w) <- strb s'
+        pstr (x+(fromIntegral $ mw-w)) (y+n*hei) s') lns
     
 
 setEventCB :: EventType -> EventCB -> XWin ()
@@ -204,18 +217,22 @@ writeMsg xc "" = do
 writeMsg xc str = do
     evalWChan xc $ do
         WinEnv { win_dpy = dpy, win_putstr = putstr, win_strbounds = strext, win_id = wid } <- ask
-        (asc, des, width) <- strext str
-        io $ clearWindow dpy wid
-        putstr 1 (1 + fromIntegral asc) str
+        (asc, des, width) <- strBounds str
         io $ do
+            clearWindow dpy wid
             mapWindow dpy wid
             resizeWindow dpy wid (width+2) (asc + des + 2)
-            flush dpy
+        putStrJ LeftJ 1 (1 + fromIntegral asc) str
         io $ flush dpy
 
 -- various utility functions
-mapWithN :: Monad m => (a -> Int -> m ()) -> [a] -> m ()
-mapWithN f xs = foldr (f) (return 0) xs >> return ()
+foldMapN :: (Foldable t, Monad m, Num n) => (a -> n -> m ()) -> t a -> m ()
+foldMapN f xs = foldl step (return 0) xs >> return ()
+    where
+        step m a = do
+            n <- m
+            f a n
+            return (n+1)
 
 dowhile :: Monad m => m Bool -> m ()
 dowhile act = do
