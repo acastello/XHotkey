@@ -91,6 +91,15 @@ putStrJ RightJ x y str = do
     foldMapN (\s' n -> do
         (_,_,w) <- strb s'
         pstr (x+(fromIntegral $ mw-w)) (y+n*hei) s') lns
+putStrJ Centered x y str = do
+    WinEnv { win_putstr = pstr, win_strbounds = strb } <- ask
+    (asc, des, _) <- strb ""
+    let lns = lines str
+        hei = fromIntegral $ asc + des
+    (_,_, mw) <- strBounds str
+    foldMapN (\s' n -> do
+        (_,_,w) <- strb s'
+        pstr (x+((fromIntegral $ mw-w)) `quot` 2) (y+n*hei) s') lns
     
 
 setEventCB :: EventType -> EventCB -> XWin ()
@@ -222,7 +231,7 @@ writeMsg xc str = do
             clearWindow dpy wid
             mapWindow dpy wid
             resizeWindow dpy wid (width+2) (asc + des + 2)
-        putStrJ LeftJ 1 (1 + fromIntegral asc) str
+        putStrJ Centered 1 (1 + fromIntegral asc) str
         io $ flush dpy
 
 -- various utility functions
