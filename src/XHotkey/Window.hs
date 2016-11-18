@@ -196,7 +196,7 @@ msgbox :: String -> X ()
 msgbox str = win (WinRes 2 0xbabdb6 0x222222 0xbabdb6 "Inconsolata: bold: pixelsize=15px") $ do
     WinEnv { win_dpy = dpy, win_id = w', win_gc = gc, win_attr = attr, win_strbounds = strb, win_putstr = drf } <- ask
     (asc,des,wdt) <- strb str
-    (_,_,hpad) <- strb "_"
+    (_,_, hpad) <- strb "_"
     let vpad = des
     when (wdt+2*hpad > 1) $ io $ do
         resizeWindow dpy w' (wdt+2*hpad) (2*vpad+asc+des)
