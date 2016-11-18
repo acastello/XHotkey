@@ -29,7 +29,9 @@ import Control.Concurrent
 import Control.Monad.Reader
 
 import Data.Bits
+import Data.Char (isSpace)
 import Data.IORef
+import Data.List (inits)
 
 import Foreign
 import Foreign.C
@@ -100,7 +102,20 @@ putStrJ Centered x y str = do
     foldMapN (\s' n -> do
         (_,_,w) <- strb s'
         pstr (x+((fromIntegral $ mw-w)) `quot` 2) (y+n*hei) s') lns
-    
+putStrJ Filled x y str = do
+    WinEnv { win_putstr = pstr, win_strbounds = strb } <- ask
+    (asc, des, _) <- strb ""
+    let lns = lines str
+        hei = fromIntegral $ asc + des
+    (_,_, mw) <- strBounds str
+    flip foldMapN lns $ \s' n -> do
+        let wds = words' s'
+        szs <- return . ((\(_,_,t) -> t) <$>) =<< traverse strb wds
+        let spcs = (spacing (mw-(sum szs)) (fromIntegral $ length szs -1))
+            poss = fromIntegral <$> sum <$> (inits $ zipWith (+) szs spcs)
+        sequence_ $ zipWith (\pos s'' -> do
+            pstr (x+pos) (y+n*hei) s''
+            ) poss wds
 
 setEventCB :: EventType -> EventCB -> XWin ()
 setEventCB typ fun = do
@@ -231,7 +246,7 @@ writeMsg xc str = do
             clearWindow dpy wid
             mapWindow dpy wid
             resizeWindow dpy wid (width+2) (asc + des + 2)
-        putStrJ Centered 1 (1 + fromIntegral asc) str
+        putStrJ Filled 1 (1 + fromIntegral asc) str
         io $ flush dpy
 
 -- various utility functions
@@ -250,3 +265,39 @@ dowhile act = do
         dowhile act
     else
         return ()
+
+printsz :: String -> XWin ()
+printsz str = do
+    WinEnv { win_strbounds = strb } <- ask
+    io . print =<< strb str
+
+spacing :: Integral a => a -> a -> [a]
+spacing n m = if n > m then
+        let q = n `quot` m
+            r = n-q
+        in q:spacing r (m-1)
+    else if n == 0 then
+        []
+    else
+        [n]
+    
+words' :: String -> [String]
+words' "" = []
+words' str = 
+    let (pre,pos) = break isSpace str
+        res = uncurry frst $ words' <$> drop' pos
+    in if null pre then
+        res
+    else
+        pre:res
+    where
+        drop' "" = ("","")
+        drop' (c:str) =
+            if isSpace c then
+                let (sp, rem) = drop' str
+                in (c:sp, rem)
+            else
+                ("", c:str)
+        frst s' (s:xs) = (s'++s):xs
+        frst "" xs = xs
+        frst s [] = [s]
