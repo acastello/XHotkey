@@ -20,8 +20,6 @@ import Control.Monad.State
 import Foreign
 import Foreign.C
 
-import qualified Data.Map as M
-
 
 data MChan m a = MChan_ (MVar (Either () (m a))) (MVar a) (IORef Bool)
 
