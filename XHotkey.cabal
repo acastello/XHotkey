@@ -14,7 +14,6 @@ library
                         XHotkey.Types
                         XHotkey.Core 
                         XHotkey.Window 
-    other-modules:  XHotkey.Internal
     extensions:     DoAndIfThenElse
     build-depends:      base,
                         unix,
