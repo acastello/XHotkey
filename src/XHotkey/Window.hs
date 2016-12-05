@@ -18,7 +18,6 @@ module XHotkey.Window
 
 import XHotkey.Types
 import XHotkey.Core
-import XHotkey.Internal
 
 import Graphics.X11
 import Graphics.X11.Xft

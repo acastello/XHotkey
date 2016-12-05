@@ -18,7 +18,7 @@ import Control.Monad.Reader
 import Control.Concurrent
 import Control.Exception
 
-import Foreign
+import Foreign hiding (void)
 import Foreign.C
 import qualified Data.List as L
 import qualified Data.Map as M
@@ -52,7 +52,19 @@ copyX act = do
         return ret
         
 mainLoop :: X ()
-mainLoop = do
+mainLoop = mainLoopH []
+
+forkLoop :: MonadIO m => m (XChan a)
+forkLoop = forkLoopH []
+
+forkLoopH :: MonadIO m => [Hook] -> m (XChan a)
+forkLoopH hs = do
+    xc <- newMChan 
+    io $ forkIO $ runX' $ mainLoopH $ (OnLoop $ void $ runMChan xc id):hs
+    return xc
+
+mainLoopH :: [Hook] -> X ()
+mainLoopH hs = do
     s@XControl { hkMap = hk } <- get
     hk2 <- traverseKeys normalizeKM hk
     put $ s { hkMap = hk2 }
@@ -63,6 +75,8 @@ mainLoop = do
     where 
       loop :: XEventPtr -> [KM] -> X ()
       loop tmp hk = do
+        flip traverse hs $ \h -> case h of OnLoop act -> act
+                                           _ -> return ()
         XControl { hkMap = hk', exitScheduled = ext } <- get
         if ext then
             return ()
@@ -154,9 +168,6 @@ _ungrabKM k = do
         KCode c -> liftIO $ ungrabKey dpy c st root
         MButton b -> liftIO $ ungrabButton dpy b st root
     return ()
-
-io :: MonadIO m => IO a -> m a
-io = liftIO
 
 
 forkX :: X () -> X ThreadId

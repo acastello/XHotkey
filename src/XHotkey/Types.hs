@@ -6,6 +6,7 @@ module XHotkey.Types
 import qualified Data.NMap as M
 import Data.NMap hiding (lookup)
 
+import Control.Concurrent
 import Control.Monad.Reader
 import Control.Monad.State
 
@@ -15,6 +16,7 @@ import Graphics.X11.Xlib.Extras (Event)
 import Data.Word
 import Data.Bits
 import Data.Char (toLower)
+import Data.IORef
 import Data.Maybe (fromMaybe)
 
 import qualified Text.Read as T
@@ -27,12 +29,56 @@ word .<. shift = shiftL word shift
 infixl 7 .>. 
 word .>. shift = shiftR word shift
 
+data MChan m a = MChan_ (MVar (Either () (m a))) (MVar a) (IORef Bool)
+
+newMChan :: MonadIO m' => m' (MChan m a)
+newMChan = io $ do
+    mv1 <- newEmptyMVar
+    mv2 <- newEmptyMVar
+    running <- newIORef True
+    return (MChan_ mv1 mv2 running)
+
+closeMChan :: MonadIO m' => MChan m a -> m' ()
+closeMChan (MChan_ v1 _ st) = io $ do
+    running <- readIORef st
+    if running then do
+        putMVar v1 (Left ())
+        writeIORef st False
+    else do
+        tryPutMVar v1 (Left ()) 
+        return ()
+
+evalMChan :: MonadIO m' => MChan m a -> m a -> m' a
+evalMChan (MChan_ v1 v2 st) action = io $ do
+    running <- readIORef st
+    if running then do
+        putMVar v1 (Right action)
+        takeMVar v2 
+    else
+        error "MChan is closed."
+
+evalMChan_ :: (Monad m, MonadIO m') => MChan m a -> m () -> m' a
+evalMChan_ chan act = evalMChan chan (act >> return undefined)
+
+runMChan :: MonadIO m' => MChan m a -> (m a -> m' a) -> m' Bool
+runMChan (MChan_ mv1 mv2 st) handle = do
+    running <- io $ readIORef st
+    if running then do
+        par <- io $ takeMVar mv1
+        case par of
+            Left _ -> return False
+            Right par' -> do
+                result <- handle par'
+                io $ putMVar mv2 result
+                return True
+    else
+        return False
 -- | XEnv
 data XEnv = XEnv
     { display   :: Display
     , rootWindow'   :: !Window
     , currentEvent :: XEventPtr
-    }
+    } deriving Show
 
 data XControl = XControl
     { hkMap :: Bindings
@@ -45,6 +91,7 @@ data Hook
     | OnExit (X ())
     | OnGrab (KM -> Bindings -> X ())
     | OnAction { onAction :: KM -> X () -> X () }
+    | OnLoop (X ())
 
 type Bindings = M.NMap KM (X ())
 
@@ -57,6 +104,16 @@ newtype X a = X (ReaderT XEnv (StateT XControl IO) a)
 
 instance Show (X a) where
     show _ = "X ()"    
+
+type XChan = MChan X
+
+newXChan :: MonadIO m => m (XChan a)
+newXChan = newMChan
+
+closeXChan :: MonadIO m => XChan a -> m ()
+closeXChan xc = do
+    evalMChan_ xc (modify $ \s -> s { exitScheduled = True })
+    closeMChan xc
 
 -- | Key and Mouse wrapper
 data KM = KM 
@@ -116,9 +173,6 @@ instance Read KMitem where
                             lit "m" T.+++ lit "mouse"
                             n <- T.readPrec
                             return (MButton n) ]
-            where
-                lit = mapM (\c -> T.get >>= \c' -> 
-                    if toLower c' == toLower c then return c' else fail "")
 
 instance Show KM where
     show (KM up mod k) = 
@@ -167,8 +221,6 @@ instance Read KM where
                 , (["btn3-", "button3 "], button3Mask)
                 , (["btn4-", "button4 "], button4Mask)
                 , (["btn5-", "button5 "], button5Mask) ]
-            lit = mapM (\c -> T.get >>= \c' -> 
-                if toLower c' == toLower c then return c' else fail "")
 
 instance Ord KM where
     KM u1 m1 k1 `compare` KM u2 m2 k2 = compare k1 k2 `mappend` compare m1 m2 `mappend` compare u1 u2
@@ -234,3 +286,14 @@ symfyKM (KM u s (KCode kc)) = do
     return (KM u s (KSym ks))
 symfyKM km = return km
 
+
+--
+-- utils
+--
+
+io :: MonadIO m => IO a -> m a
+io = liftIO
+
+lit :: String -> T.ReadPrec String
+lit = mapM (\c -> T.get >>= \c' -> 
+    if toLower c' == toLower c then return c' else fail "")
