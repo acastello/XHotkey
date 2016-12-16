@@ -315,3 +315,11 @@ unbind = modifyBindings . delete
 printBindings :: X ()
 printBindings =
     get >>= liftIO . putStrLn . drawNMap . hkMap 
+
+windowPid :: Window -> X (Maybe CPid)
+windowPid win = do
+    XEnv { display = dpy } <- ask
+    liftIO $ do
+        atom <- internAtom dpy "_NET_WM_PID" False
+        mpid <- getWindowProperty32 dpy atom win
+        return $ fmap (fromIntegral . head) mpid
