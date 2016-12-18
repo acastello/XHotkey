@@ -21,3 +21,4 @@ library
                         mtl >= 2.0,
                         containers,
                         NMap
+    build-tools:        hsc2hs

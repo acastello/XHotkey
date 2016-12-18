@@ -1,4 +1,4 @@
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving, StandaloneDeriving #-}
 
 module XHotkey.Types 
     where
@@ -19,6 +19,14 @@ import Data.Char (toLower)
 import Data.IORef
 import Data.Maybe (fromMaybe)
 
+import Data.String
+
+import Foreign
+import Foreign.C
+
+import System.Posix
+import System.Posix.IO
+
 import qualified Text.Read as T
 import Text.Read.Lex (numberToInteger)
 import Numeric (showHex)
@@ -28,6 +36,10 @@ word .<. shift = shiftL word shift
 
 infixl 7 .>. 
 word .>. shift = shiftR word shift
+
+#include <X11/Xlib.h>
+
+deriving instance Storable (Display)
 
 data MChan m a = MChan_ (MVar (Either () (m a))) (MVar a) (IORef Bool)
 
@@ -73,6 +85,39 @@ runMChan (MChan_ mv1 mv2 st) handle = do
                 return True
     else
         return False
+
+tryEvalMChan (MChan_ v1 v2 st) action = io $ do
+    running <- readIORef st
+    if running then do
+        succ <- tryPutMVar v1 (Right action)
+        if succ then 
+            Just <$> takeMVar v2
+        else
+            return Nothing
+    else
+        error "MChan is closed."
+
+tryRunMChan :: MonadIO m' => MChan m a -> (m a -> m' a) -> m' Bool
+tryRunMChan (MChan_ mv1 mv2 st) handle = do
+    running <- io $ readIORef st
+    if running then do
+        par <- io $ tryTakeMVar mv1
+        case par of
+            Nothing -> return True
+            Just (Left _) -> return False
+            Just (Right par') -> do
+                result <- handle par'
+                io $ putMVar mv2 result
+                return True
+    else
+        return False
+
+foreverChan :: MonadIO m' => MChan m a -> (m a -> m' a) -> m' ()
+foreverChan chan act = do
+    rep <- runMChan chan act
+    when rep $ foreverChan chan act
+
+
 -- | XEnv
 data XEnv = XEnv
     { display   :: Display
@@ -83,7 +128,10 @@ data XEnv = XEnv
 data XControl = XControl
     { hkMap :: Bindings
     , exitScheduled :: Bool
-    }
+    } deriving Show
+
+defaultXControl :: XControl
+defaultXControl = XControl mempty False
 
 data Hook 
     = OnClear (X ())
@@ -92,6 +140,8 @@ data Hook
     | OnGrab (KM -> Bindings -> X ())
     | OnAction { onAction :: KM -> X () -> X () }
     | OnLoop (X ())
+
+type ForkedX = (XEnv, Window, ThreadId)
 
 type Bindings = M.NMap KM (X ())
 
@@ -229,6 +279,9 @@ instance Enum KM where
     fromEnum (KM up st k) = ((fromEnum up) `shiftL` 59) .|. ((fromIntegral st) `shiftL` 27) .|. fromEnum k
     toEnum n = KM (testBit n 59) (fromIntegral $ n `shiftR` 27 .&. 0xfff) (toEnum $ n .&. 0x7ffffff)
 
+instance IsString KM where
+    fromString = read
+
 fromChar :: Char -> KM
 fromChar = KM False 0 . KSym . fromIntegral . fromEnum
 
@@ -287,6 +340,45 @@ symfyKM (KM u s (KCode kc)) = do
 symfyKM km = return km
 
 
+type ClientMessage = XEventPtr
+
+newClientMessage :: Display -> Window -> X () ->  IO ClientMessage
+newClientMessage display win act = do
+    sptr <- newStablePtr act
+    ptr <- callocBytes #size XEvent
+    (#poke XClientMessageEvent, type) ptr clientMessage
+    (#poke XClientMessageEvent, send_event) ptr (0 :: CInt)
+    (#poke XClientMessageEvent, display) ptr display
+    (#poke XClientMessageEvent, window) ptr win
+    (#poke XClientMessageEvent, format) ptr (32 :: CInt)
+    (#poke XClientMessageEvent, data) ptr (castStablePtrToPtr sptr)
+    return ptr
+
+freeClientMessage :: ClientMessage -> IO ()
+freeClientMessage msg = do
+    ptr <- (#peek XClientMessageEvent, data) msg
+    freeStablePtr $ castPtrToStablePtr ptr
+    free msg
+
+peekClientMessage :: ClientMessage -> IO (X ())
+peekClientMessage msg = do
+    ptr <- (#peek XClientMessageEvent, data) msg
+    deRefStablePtr ptr
+
+consumeClientMessage :: ClientMessage -> IO (X ())
+consumeClientMessage msg = do
+    ptr <- castPtrToStablePtr <$> (#peek XClientMessageEvent, data) msg
+    act <- deRefStablePtr ptr
+    freeStablePtr ptr
+    return act
+
+sendClientMessage :: Display -> ClientMessage -> IO ()
+sendClientMessage dpy msg = do
+    let fd = Fd $ connectionNumber dpy
+    fdWriteBuf fd (castPtr msg) (#size XEvent)
+    return ()
+
+
 --
 -- utils
 --
@@ -297,3 +389,4 @@ io = liftIO
 lit :: String -> T.ReadPrec String
 lit = mapM (\c -> T.get >>= \c' -> 
     if toLower c' == toLower c then return c' else fail "")
+

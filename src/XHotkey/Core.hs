@@ -1,4 +1,4 @@
-{-# LANGUAGE DoAndIfThenElse #-}
+{-# LANGUAGE DoAndIfThenElse, OverloadedStrings #-}
 
 module XHotkey.Core where
 
@@ -10,19 +10,21 @@ import Graphics.X11.Xlib.Extras
 import System.Posix.Process
 import System.Posix.Types
 
+import Data.IORef
 import Data.Word
-
-import Control.Monad.State
-import Control.Monad.Reader
 
 import Control.Concurrent
 import Control.Exception
+import Control.Monad.State
+import Control.Monad.Reader 
 
-import Foreign hiding (void)
-import Foreign.C
 import qualified Data.List as L
 import qualified Data.Map as M
 import qualified Data.Tree as T
+
+import Foreign hiding (void)
+import Foreign.C
+
 import Prelude hiding (lookup)
 
 runX :: (X a) -> XEnv -> XControl -> IO (a, XControl)
@@ -30,6 +32,7 @@ runX (X a) env control = runStateT (runReaderT a env) control
 
 runX' :: (X a) -> IO a
 runX' m = do
+    initThreads
     dpy <- openDisplay ""
     let root = defaultRootWindow dpy
     ret <- allocaXEvent $ \e -> try $ 
@@ -39,6 +42,35 @@ runX' m = do
     case ret of
         Left e -> error $ show (e :: SomeException)
         Right (ret', _) -> return ret'
+
+runForkedX :: X () -> IO ForkedX
+runForkedX act = do
+    mvar <- newEmptyMVar
+    thread <- forkIO $ runX' $ do
+        xenv <- ask
+        w <- io $ createSimpleWindow (display xenv) (rootWindow' xenv) 0 0 1 1 0 0 0
+        io $ putMVar mvar (xenv, w)
+        act
+    (env, win) <- takeMVar mvar
+    return (env,win,thread)
+
+queueX :: ForkedX -> X () -> IO ()
+queueX (XEnv { display = dpy } , win, _) act = do
+    msg <- newClientMessage dpy win act
+    io $ do
+        sendEvent dpy win False 0 msg
+        -- putBackEvent dpy c
+        -- sendClientMessage dpy c
+        flush dpy
+        free msg
+
+exitForkedX :: ForkedX -> IO ()
+exitForkedX = flip queueX exitX
+
+killForkedX :: ForkedX -> IO ()
+killForkedX fx @ (_,_,tid) = do
+    queueX fx exitX
+    killThread tid
 
 copyX :: X a -> X a
 copyX act = do
@@ -52,19 +84,7 @@ copyX act = do
         return ret
         
 mainLoop :: X ()
-mainLoop = mainLoopH []
-
-forkLoop :: MonadIO m => m (XChan a)
-forkLoop = forkLoopH []
-
-forkLoopH :: MonadIO m => [Hook] -> m (XChan a)
-forkLoopH hs = do
-    xc <- newMChan 
-    io $ forkIO $ runX' $ mainLoopH $ (OnLoop $ void $ runMChan xc id):hs
-    return xc
-
-mainLoopH :: [Hook] -> X ()
-mainLoopH hs = do
+mainLoop = do
     s@XControl { hkMap = hk } <- get
     hk2 <- traverseKeys normalizeKM hk
     put $ s { hkMap = hk2 }
@@ -75,39 +95,49 @@ mainLoopH hs = do
     where 
       loop :: XEventPtr -> [KM] -> X ()
       loop tmp hk = do
-        flip traverse hs $ \h -> case h of OnLoop act -> act
-                                           _ -> return ()
-        XControl { hkMap = hk', exitScheduled = ext } <- get
+        -- printBindings
+        xc @ XControl { hkMap = hk', exitScheduled = ext } <- get
         if ext then
             return ()
         else do
             mapM_ _grabKM (rootKeys hk' L.\\ hk)
             mapM_ _ungrabKM (hk L.\\ (rootKeys hk'))
             XEnv { display = dpy, rootWindow' = root, currentEvent = ptr } <- ask
+            XControl { hkMap = hk' } <- get
             liftIO $ nextEvent dpy ptr
-            nevs <- io $ eventsQueued dpy queuedAfterReading
-            km <- ptrToKM tmp nevs
-            -- io $ print km
-            case do
-                km' <- km
-                x <- lookup km' hk'
-                case x of
-                    Left m -> return $ do
-                        liftIO $ do 
-                            grabKeyboard dpy root False grabModeAsync grabModeAsync currentTime
-                            grabPointer dpy root False (buttonPressMask .|. buttonReleaseMask) grabModeAsync grabModeAsync 0 0 0 
-                            maskEvent dpy (buttonPressMask .|. buttonReleaseMask .|. keyPressMask .|. keyReleaseMask) ptr
-                        x <- grabbedLoop tmp m
-                        liftIO $ do 
-                            ungrabKeyboard dpy currentTime
-                            ungrabPointer dpy currentTime
-                        x
-                        return ()
-                    Right x -> return x
-                of
-                Just x -> x
-                Nothing -> return ()
+            typ <- io $ get_EventType ptr
+            if typ == clientMessage then do
+                c <- io $ consumeClientMessage ptr
+                c
+            else
+                step tmp 
             loop tmp (rootKeys hk')
+      step :: XEventPtr -> X ()
+      step tmp = do
+        XControl { hkMap = hk', exitScheduled = ext } <- get
+        XEnv { display = dpy, rootWindow' = root, currentEvent = ptr } <- ask
+        nevs <- io $ eventsQueued dpy queuedAfterReading
+        km <- ptrToKM tmp nevs
+        -- io $ print km
+        case do
+            km' <- km
+            x <- lookup km' hk'
+            case x of
+                Left m -> return $ do
+                    liftIO $ do 
+                        grabKeyboard dpy root True grabModeAsync grabModeAsync currentTime
+                        grabPointer dpy root True (buttonPressMask .|. buttonReleaseMask) grabModeAsync grabModeAsync 0 0 0 
+                        -- maskEvent dpy (buttonPressMask .|. buttonReleaseMask .|. keyPressMask .|. keyReleaseMask) ptr
+                    x <- grabbedLoop tmp m
+                    liftIO $ do 
+                        ungrabKeyboard dpy currentTime
+                        ungrabPointer dpy currentTime
+                    x
+                    return ()
+                Right x -> return x
+            of
+            Just x -> x
+            Nothing -> return ()
                 
       ptrToKM :: XEventPtr -> CInt -> X (Maybe KM)
       ptrToKM ptr n = do
@@ -123,7 +153,7 @@ mainLoopH hs = do
         if (km == nullKM) then    
             return Nothing
         else if n > 0 && t1 == t0 && mainKey km == mainKey km' then io $ do
-            -- putStrLn "skippin'"
+            putStrLn "skippin'"
             nextEvent dpy ptr
             return Nothing
         else
@@ -155,7 +185,7 @@ mainLoopH hs = do
 _grabKM :: KM -> X ()
 _grabKM k = do
     XEnv { display = dpy, rootWindow' = root } <- ask
-    (KM _ st k') <- normalizeKM k
+    k @ (KM _ st k') <- normalizeKM k
     case k' of
         KCode c -> liftIO $ grabKey dpy c st root False grabModeAsync grabModeAsync
         MButton b -> liftIO $ grabButton dpy b st root False (buttonPressMask .|. buttonReleaseMask) grabModeAsync grabModeAsync root 0
@@ -306,8 +336,9 @@ askKeysym = do
 
 bind :: [KM] -> X () -> X ()
 bind kms act = do
-    xc@XControl { hkMap = hk, exitScheduled = ext } <- get
-    put xc { hkMap = insert kms act hk }
+    xc@XControl { hkMap = hk } <- get
+    kms' <- traverse normalizeKM kms
+    put xc { hkMap = insert kms' act hk }
 
 unbind :: [KM] -> X ()
 unbind = modifyBindings . delete
@@ -323,3 +354,5 @@ windowPid win = do
         atom <- internAtom dpy "_NET_WM_PID" False
         mpid <- getWindowProperty32 dpy atom win
         return $ fmap (fromIntegral . head) mpid
+
+
