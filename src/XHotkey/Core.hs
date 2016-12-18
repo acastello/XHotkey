@@ -32,7 +32,6 @@ runX (X a) env control = runStateT (runReaderT a env) control
 
 runX' :: (X a) -> IO a
 runX' m = do
-    initThreads
     dpy <- openDisplay ""
     let root = defaultRootWindow dpy
     ret <- allocaXEvent $ \e -> try $ 
@@ -45,6 +44,7 @@ runX' m = do
 
 runForkedX :: X () -> IO ForkedX
 runForkedX act = do
+    initThreads
     mvar <- newEmptyMVar
     thread <- forkIO $ runX' $ do
         xenv <- ask
@@ -335,6 +335,7 @@ askKeysym = do
     io $ lookupString kev
 
 bind :: [KM] -> X () -> X ()
+bind [] _ = return ()
 bind kms act = do
     xc@XControl { hkMap = hk } <- get
     kms' <- traverse normalizeKM kms
