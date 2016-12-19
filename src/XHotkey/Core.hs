@@ -153,7 +153,7 @@ mainLoop = do
         if (km == nullKM) then    
             return Nothing
         else if n > 0 && t1 == t0 && mainKey km == mainKey km' then io $ do
-            putStrLn "skippin'"
+            -- putStrLn "skippin'"
             nextEvent dpy ptr
             return Nothing
         else
