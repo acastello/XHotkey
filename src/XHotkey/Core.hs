@@ -1,4 +1,4 @@
-{-# LANGUAGE DoAndIfThenElse, OverloadedStrings #-}
+{-# LANGUAGE DoAndIfThenElse, OverloadedStrings, BangPatterns #-}
 
 module XHotkey.Core where
 
@@ -136,7 +136,7 @@ mainLoop = do
                     return ()
                 Right x -> return x
             of
-            Just x -> x
+            Just !x -> x >>= io . evaluate
             Nothing -> return ()
                 
       ptrToKM :: XEventPtr -> CInt -> X (Maybe KM)
