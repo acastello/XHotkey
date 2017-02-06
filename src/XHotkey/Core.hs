@@ -27,6 +27,8 @@ import Foreign.C
 
 import Prelude hiding (lookup)
 
+import System.Process (callCommand)
+
 runX :: (X a) -> XEnv -> XControl -> IO (a, XControl)
 runX (X a) env control = runStateT (runReaderT a env) control
 
@@ -218,6 +220,9 @@ forkP prog = io . forkProcess $ do
 
 forkP_ :: MonadIO m => IO () -> m ()
 forkP_ = (>> return ()) . forkP
+
+shell :: String -> IO ()
+shell = callCommand
 
 spawnPID :: MonadIO m => String -> m ProcessID
 spawnPID prog = forkP $ executeFile "/bin/sh" False ["-c", prog] Nothing

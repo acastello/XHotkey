@@ -20,5 +20,6 @@ library
                         X11, X11-xft,
                         mtl >= 2.0,
                         containers,
+                        process,
                         NMap
     build-tools:        hsc2hs
