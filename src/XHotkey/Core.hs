@@ -84,13 +84,18 @@ copyX act = do
         ret <- runX act (XEnv dpy' root' ev') xctrl >>= return . fst
         closeDisplay dpy'
         return ret
+
+attachTo :: Window -> Window -> Int32 -> Int32 -> IO ()
+attachTo ch pa x y = do
+    XEnv { display = dpy } <- ask
+    reparentWindow dpy ch pa x y
         
 mainLoop :: X ()
 mainLoop = do
     s@XControl { hkMap = hk } <- get
     hk2 <- traverseKeys normalizeKM hk
     put $ s { hkMap = hk2 }
-    tmp <- io $ callocBytes 196 :: X XEventPtr
+    tmp <- io $ callocXEvent
     loop tmp mempty
     io $ free tmp
     return ()
@@ -108,9 +113,8 @@ mainLoop = do
             XControl { hkMap = hk' } <- get
             liftIO $ nextEvent dpy ptr
             typ <- io $ get_EventType ptr
-            if typ == clientMessage then do
-                c <- io $ consumeClientMessage ptr
-                c
+            if typ == clientMessage then
+                join $ io $ consumeClientMessage ptr
             else
                 step tmp 
             loop tmp (rootKeys hk')
@@ -138,13 +142,14 @@ mainLoop = do
                     return ()
                 Right x -> return x
             of
-            Just !x -> x >>= io . evaluate
+            Just x -> x 
             Nothing -> return ()
                 
       ptrToKM :: XEventPtr -> CInt -> X (Maybe KM)
       ptrToKM ptr n = do
         XEnv { display = dpy, currentEvent = cur } <- ask
         (t0, km) <- io $ eventToKM' cur
+        io $ print km
         (t1, km') <- 
             if n > 0 then io $ do
                 peekEvent dpy ptr 
@@ -156,7 +161,7 @@ mainLoop = do
             return Nothing
         else if n > 0 && t1 == t0 && mainKey km == mainKey km' then io $ do
             -- putStrLn "skippin'"
-            nextEvent dpy ptr
+            -- nextEvent dpy ptr
             return Nothing
         else
             return (Just km)

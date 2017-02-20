@@ -41,6 +41,9 @@ word .>. shift = shiftR word shift
 
 deriving instance Storable (Display)
 
+callocXEvent :: IO (XEventPtr)
+callocXEvent = callocBytes #{size XEvent}
+
 data MChan m a = MChan_ (MVar (Either () (m a))) (MVar a) (IORef Bool)
 
 newMChan :: MonadIO m' => m' (MChan m a)
