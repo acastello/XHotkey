@@ -85,11 +85,25 @@ copyX act = do
         closeDisplay dpy'
         return ret
 
-attachTo :: Window -> Window -> Int32 -> Int32 -> IO ()
+attachTo :: Window -> Window -> Int32 -> Int32 -> X ()
 attachTo ch pa x y = do
     XEnv { display = dpy } <- ask
-    reparentWindow dpy ch pa x y
+    liftIO $ reparentWindow dpy ch pa x y
         
+
+waitX :: X ()
+waitX = do
+    return ()
+
+setBindings :: Bindings -> X ()
+setBindings binds = do
+    xctrl <- get
+    let oldbase = rootKeys (hkMap xctrl)
+        newbase = rootKeys binds
+    mapM_ _grabKM (newbase L.\\ oldbase)
+    mapM_ _ungrabKM (oldbase L.\\ newbase)
+    put xctrl { hkMap = binds }
+
 mainLoop :: X ()
 mainLoop = do
     s@XControl { hkMap = hk } <- get
@@ -206,7 +220,6 @@ _ungrabKM k = do
         MButton b -> liftIO $ ungrabButton dpy b st root
     return ()
 
-
 forkX :: X () -> X ThreadId
 forkX x = do
     xenv@XEnv { currentEvent = ptr } <- ask
@@ -215,8 +228,8 @@ forkX x = do
         copyBytes ptr' ptr 196 
         runX x xenv { currentEvent = ptr' } xctrl >> return ()
 
-forkX_ :: X () -> X ()
-forkX_ = (>> return ()) . forkX
+forkX_ :: X a -> X ()
+forkX_ = void . forkX . void
 
 forkP :: MonadIO m => IO () -> m ProcessID
 forkP prog = io . forkProcess $ do
@@ -233,7 +246,7 @@ spawnPID :: MonadIO m => String -> m ProcessID
 spawnPID prog = forkP $ executeFile "/bin/sh" False ["-c", prog] Nothing
 
 spawn :: MonadIO m => String -> m ()
-spawn prog = spawnPID prog >> return ()
+spawn = void . spawnPID 
 
 currentEventType :: X EventType
 currentEventType = ask >>= liftIO . get_EventType . currentEvent
@@ -255,6 +268,35 @@ windowsTree = do
             wins' <- traverse windowsTree' wins
             return $ T.Node w wins'
     
+-- | Wait for a KeyPress, KeyRelease, ButtonPress or ButtonRelease, execute any
+-- ClientMessage if necessary, will throw an exception if 
+waitKM :: Bool -> X KM
+waitKM acceptsRepeats = do
+    xenv @ XEnv { display = dpy, rootWindow' = root, currentEvent = ptr } <- ask
+    liftIO $ nextEvent dpy ptr
+    typ <- io $ get_EventType ptr
+    if any (typ ==) [keyPress, keyRelease, buttonPress, buttonRelease] then do
+        (t,km) <- io $ eventToKM' ptr
+        if acceptsRepeats then
+            return km
+        else do
+            nevs <- io $ eventsQueued dpy queuedAfterReading
+            if nevs > 0 then do
+                (t', km') <- io $ do
+                    peekEvent dpy ptr
+                    eventToKM' ptr
+                if t == t' && mainKey km == mainKey km' then do
+                    io $ nextEvent dpy ptr
+                    waitKM acceptsRepeats
+                else
+                    return km
+            else
+                return km
+    else do
+        when (typ == clientMessage) $
+            join $ io $ consumeClientMessage ptr
+        waitKM acceptsRepeats
+
 exitX :: X ()
 exitX = do
     s <- get
@@ -312,12 +354,7 @@ inCurrentPos f = do
 modifyBindings :: (Bindings -> Bindings) -> X ()
 modifyBindings f = do
     s@XControl { hkMap = b } <- get
-    put $ s { hkMap = f b }
-
-setBindings :: Bindings -> X ()
-setBindings b = do
-    b' <- mapKeysM normalizeKM b
-    modify $ \s -> s { hkMap = b' }
+    setBindings (f b)
 
 eventToKM' :: XEventPtr -> IO (Time, KM)
 eventToKM' ptr = do
@@ -347,9 +384,8 @@ askKeysym = do
 bind :: [KM] -> X () -> X ()
 bind [] _ = return ()
 bind kms act = do
-    xc@XControl { hkMap = hk } <- get
     kms' <- traverse normalizeKM kms
-    put xc { hkMap = insert kms' act hk }
+    modifyBindings (insert kms' act)
 
 unbind :: [KM] -> X ()
 unbind = modifyBindings . delete

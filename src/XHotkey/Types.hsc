@@ -3,6 +3,8 @@
 module XHotkey.Types 
     where
 
+import Data.Alternative
+
 import qualified Data.NMap as M
 import Data.NMap hiding (lookup)
 
@@ -153,7 +155,8 @@ drawBindings = drawNMap
 
 -- | X reader monad
 newtype X a = X (ReaderT XEnv (StateT XControl IO) a)
-    deriving (Functor, Applicative, Monad, MonadReader XEnv, MonadState XControl, MonadIO)
+    deriving (Functor, Applicative, Monad, MonadReader XEnv, MonadState XControl
+             , MonadIO, Alternative, MonadPlus)
 
 instance Show (X a) where
     show _ = "X ()"    
