@@ -3,28 +3,26 @@
 module XHotkey.Types 
     where
 
-import Data.Alternative
-
-import qualified Data.NMap as M
-import Data.NMap hiding (lookup)
-
+import Control.Applicative
 import Control.Concurrent
+import Control.Exception
 import Control.Monad.Reader
 import Control.Monad.State
+
+import Foreign
+import Foreign.C
 
 import Graphics.X11
 import Graphics.X11.Xlib.Extras (Event)
 
-import Data.Word
 import Data.Bits
 import Data.Char (toLower)
 import Data.IORef
 import Data.Maybe (fromMaybe)
-
+import qualified Data.NMap as M
+import Data.NMap hiding (lookup)
 import Data.String
-
-import Foreign
-import Foreign.C
+import Data.Word
 
 import System.Posix
 import System.Posix.IO
@@ -43,8 +41,11 @@ word .>. shift = shiftR word shift
 
 deriving instance Storable (Display)
 
+xeventsize :: Int
+xeventsize = #{size XEvent}
+
 callocXEvent :: IO (XEventPtr)
-callocXEvent = callocBytes #{size XEvent}
+callocXEvent = callocBytes xeventsize
 
 data MChan m a = MChan_ (MVar (Either () (m a))) (MVar a) (IORef Bool)
 
@@ -125,14 +126,15 @@ foreverChan chan act = do
 
 -- | XEnv
 data XEnv = XEnv
-    { display   :: Display
-    , rootWindow'   :: !Window
-    , currentEvent :: XEventPtr
+    { xdisplay      :: Display
+    , xroot         :: !Window
+    , xlastevent    :: XEventPtr
+    , xtempevent    :: XEventPtr
     } deriving Show
 
 data XControl = XControl
-    { hkMap :: Bindings
-    , exitScheduled :: Bool
+    { xbindings       :: Bindings
+    , xrepeatkeys     :: Bool
     } deriving Show
 
 defaultXControl :: XControl
@@ -168,7 +170,7 @@ newXChan = newMChan
 
 closeXChan :: MonadIO m => XChan a -> m ()
 closeXChan xc = do
-    evalMChan_ xc (modify $ \s -> s { exitScheduled = True })
+    evalMChan_ xc mzero
     closeMChan xc
 
 -- | Key and Mouse wrapper
@@ -333,14 +335,14 @@ listModifiers s = [s .&. (1 `shiftL` i) | i <- [0..12], testBit s i]
 
 normalizeKM :: KM -> X KM
 normalizeKM (KM u s (KSym ks)) = do
-    XEnv {display = dpy} <- ask
+    XEnv { xdisplay = dpy } <- ask
     kc <- liftIO $ keysymToKeycode dpy ks
     return (KM u s (KCode kc))
 normalizeKM km = return km
 
 symfyKM :: KM -> X KM
 symfyKM (KM u s (KCode kc)) = do
-    XEnv { display = dpy } <- ask
+    XEnv { xdisplay = dpy } <- ask
     ks <- liftIO $ keycodeToKeysym dpy kc 0
     return (KM u s (KSym ks))
 symfyKM km = return km

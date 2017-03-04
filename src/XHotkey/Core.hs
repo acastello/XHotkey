@@ -36,8 +36,8 @@ runX' :: (X a) -> IO a
 runX' m = do
     dpy <- openDisplay ""
     let root = defaultRootWindow dpy
-    ret <- allocaXEvent $ \e -> try $ 
-        fillBytes e 0 196 >> runX m (XEnv dpy root e) 
+    ret <- allocaXEvent $ \e -> allocaXEvent $ \e' -> try $ 
+        fillBytes e 0 xeventsize >> runX m (XEnv dpy root e e') 
         (XControl mempty False) -- :: IO (Either SomeException (a, XControl))
     closeDisplay dpy
     case ret of
@@ -50,14 +50,14 @@ runForkedX act = do
     mvar <- newEmptyMVar
     thread <- forkIO $ runX' $ do
         xenv <- ask
-        w <- io $ createSimpleWindow (display xenv) (rootWindow' xenv) 0 0 1 1 0 0 0
+        w <- io $ createSimpleWindow (xdisplay xenv) (xroot xenv) 0 0 1 1 0 0 0
         io $ putMVar mvar (xenv, w)
         act
     (env, win) <- takeMVar mvar
     return (env,win,thread)
 
 queueX :: ForkedX -> X () -> IO ()
-queueX (XEnv { display = dpy } , win, _) act = do
+queueX (XEnv { xdisplay = dpy } , win, _) act = do
     msg <- newClientMessage dpy win act
     io $ do
         sendEvent dpy win False 0 msg
@@ -76,18 +76,19 @@ killForkedX fx @ (_,_,tid) = do
 
 copyX :: X a -> X a
 copyX act = do
-    XEnv dpy root ev <- ask
+    xenv @ XEnv { xdisplay = dpy, xroot = root } <- ask
     xctrl <- get
-    io $ allocaXEvent $ \ev' -> do
+    io $ allocaXEvent $ \ev' -> allocaXEvent $ \ev'' -> do
+        fillBytes ev' 0 xeventsize
         dpy' <- openDisplay (displayString dpy)
         let root' = defaultRootWindow dpy'
-        ret <- runX act (XEnv dpy' root' ev') xctrl >>= return . fst
+        ret <- runX act (XEnv dpy' root' ev' ev'') xctrl >>= return . fst
         closeDisplay dpy'
         return ret
 
 attachTo :: Window -> Window -> Int32 -> Int32 -> X ()
 attachTo ch pa x y = do
-    XEnv { display = dpy } <- ask
+    XEnv { xdisplay = dpy } <- ask
     liftIO $ reparentWindow dpy ch pa x y
         
 
@@ -98,17 +99,17 @@ waitX = do
 setBindings :: Bindings -> X ()
 setBindings binds = do
     xctrl <- get
-    let oldbase = rootKeys (hkMap xctrl)
+    let oldbase = rootKeys (xbindings xctrl)
         newbase = rootKeys binds
     mapM_ _grabKM (newbase L.\\ oldbase)
     mapM_ _ungrabKM (oldbase L.\\ newbase)
-    put xctrl { hkMap = binds }
+    put xctrl { xbindings = binds }
 
 mainLoop :: X ()
 mainLoop = do
-    s@XControl { hkMap = hk } <- get
+    s@XControl { xbindings = hk } <- get
     hk2 <- traverseKeys normalizeKM hk
-    put $ s { hkMap = hk2 }
+    put $ s { xbindings = hk2 }
     tmp <- io $ callocXEvent
     loop tmp mempty
     io $ free tmp
@@ -117,25 +118,22 @@ mainLoop = do
       loop :: XEventPtr -> [KM] -> X ()
       loop tmp hk = do
         -- printBindings
-        xc @ XControl { hkMap = hk', exitScheduled = ext } <- get
-        if ext then
-            return ()
-        else do
-            mapM_ _grabKM (rootKeys hk' L.\\ hk)
-            mapM_ _ungrabKM (hk L.\\ (rootKeys hk'))
-            XEnv { display = dpy, rootWindow' = root, currentEvent = ptr } <- ask
-            XControl { hkMap = hk' } <- get
-            liftIO $ nextEvent dpy ptr
-            typ <- io $ get_EventType ptr
-            if typ == clientMessage then
-                join $ io $ consumeClientMessage ptr
-            else
-                step tmp 
-            loop tmp (rootKeys hk')
+        xc @ XControl { xbindings = hk' } <- get
+        mapM_ _grabKM (rootKeys hk' L.\\ hk)
+        mapM_ _ungrabKM (hk L.\\ (rootKeys hk'))
+        XEnv { xdisplay = dpy, xroot = root, xlastevent = ptr } <- ask
+        XControl { xbindings = hk' } <- get
+        liftIO $ nextEvent dpy ptr
+        typ <- io $ get_EventType ptr
+        if typ == clientMessage then
+            join $ io $ consumeClientMessage ptr
+        else
+            step tmp 
+        loop tmp (rootKeys hk')
       step :: XEventPtr -> X ()
       step tmp = do
-        XControl { hkMap = hk', exitScheduled = ext } <- get
-        XEnv { display = dpy, rootWindow' = root, currentEvent = ptr } <- ask
+        XControl { xbindings = hk' } <- get
+        XEnv { xdisplay = dpy, xroot = root, xlastevent = ptr } <- ask
         nevs <- io $ eventsQueued dpy queuedAfterReading
         km <- ptrToKM tmp nevs
         -- io $ print km
@@ -161,9 +159,9 @@ mainLoop = do
                 
       ptrToKM :: XEventPtr -> CInt -> X (Maybe KM)
       ptrToKM ptr n = do
-        XEnv { display = dpy, currentEvent = cur } <- ask
+        XEnv { xdisplay = dpy, xlastevent = cur } <- ask
         (t0, km) <- io $ eventToKM' cur
-        io $ print km
+        -- io $ print km
         (t1, km') <- 
             if n > 0 then io $ do
                 peekEvent dpy ptr 
@@ -181,7 +179,7 @@ mainLoop = do
             return (Just km)
       grabbedLoop :: XEventPtr -> Bindings -> X (X ())
       grabbedLoop tmp m = do
-        XEnv { display = dpy, rootWindow' = root, currentEvent = ptr } <- ask
+        XEnv { xdisplay = dpy, xroot = root, xlastevent = ptr } <- ask
         liftIO $ nextEvent dpy ptr
         nevs <- io $ eventsQueued dpy queuedAfterReading
         km <- ptrToKM tmp nevs
@@ -205,7 +203,7 @@ mainLoop = do
     
 _grabKM :: KM -> X ()
 _grabKM k = do
-    XEnv { display = dpy, rootWindow' = root } <- ask
+    XEnv { xdisplay = dpy, xroot = root } <- ask
     k @ (KM _ st k') <- normalizeKM k
     case k' of
         KCode c -> liftIO $ grabKey dpy c st root False grabModeAsync grabModeAsync
@@ -213,7 +211,7 @@ _grabKM k = do
 
 _ungrabKM :: KM -> X ()
 _ungrabKM k = do
-    XEnv { display = dpy, rootWindow' = root } <- ask
+    XEnv { xdisplay = dpy, xroot = root } <- ask
     (KM _ st k') <- normalizeKM k
     case k' of
         KCode c -> liftIO $ ungrabKey dpy c st root
@@ -222,11 +220,11 @@ _ungrabKM k = do
 
 forkX :: X () -> X ThreadId
 forkX x = do
-    xenv@XEnv { currentEvent = ptr } <- ask
+    xenv@XEnv { xlastevent = ptr } <- ask
     xctrl <- get
     io $ forkIO $ allocaXEvent $ \ptr' -> do
         copyBytes ptr' ptr 196 
-        runX x xenv { currentEvent = ptr' } xctrl >> return ()
+        runX x xenv { xlastevent = ptr' } xctrl >> return ()
 
 forkX_ :: X a -> X ()
 forkX_ = void . forkX . void
@@ -248,22 +246,22 @@ spawnPID prog = forkP $ executeFile "/bin/sh" False ["-c", prog] Nothing
 spawn :: MonadIO m => String -> m ()
 spawn = void . spawnPID 
 
-currentEventType :: X EventType
-currentEventType = ask >>= liftIO . get_EventType . currentEvent
+xlasteventType :: X EventType
+xlasteventType = ask >>= liftIO . get_EventType . xlastevent
 
 flushX :: X ()
 flushX = do
-    XEnv { display = dpy } <- ask
+    XEnv { xdisplay = dpy } <- ask
     liftIO $flush dpy
 
 windowsTree :: X (T.Tree Window)
 windowsTree = do
-    XEnv { rootWindow' = root } <- ask
+    XEnv { xroot = root } <- ask
     windowsTree' root
     where
         windowsTree' :: Window -> X (T.Tree Window)
         windowsTree' w = do
-            dpy <- return . display =<< ask
+            dpy <- return . xdisplay =<< ask
             wins <- io $ return . (\(_,_,y) -> y) =<< queryTree dpy w 
             wins' <- traverse windowsTree' wins
             return $ T.Node w wins'
@@ -272,7 +270,7 @@ windowsTree = do
 -- ClientMessage if necessary, will throw an exception if 
 waitKM :: Bool -> X KM
 waitKM acceptsRepeats = do
-    xenv @ XEnv { display = dpy, rootWindow' = root, currentEvent = ptr } <- ask
+    xenv @ XEnv { xdisplay = dpy, xroot = root, xlastevent = ptr } <- ask
     liftIO $ nextEvent dpy ptr
     typ <- io $ get_EventType ptr
     if any (typ ==) [keyPress, keyRelease, buttonPress, buttonRelease] then do
@@ -298,13 +296,11 @@ waitKM acceptsRepeats = do
         waitKM acceptsRepeats
 
 exitX :: X ()
-exitX = do
-    s <- get
-    put $ s {exitScheduled = True}
+exitX = mzero
 
 pointerPos :: X (Position, Position)
 pointerPos = do
-    XEnv { display = dpy, rootWindow' = root, currentEvent = ptr} <- ask
+    XEnv { xdisplay = dpy, xroot = root, xlastevent = ptr} <- ask
     liftIO $ do
         typ <- if ptr == nullPtr then return 0 else get_EventType ptr
         if typ > 2 then do
@@ -316,14 +312,14 @@ pointerPos = do
 
 relPointerPos :: Window -> X (Position, Position)
 relPointerPos w = do
-    XEnv { display = dpy } <- ask
+    XEnv { xdisplay = dpy } <- ask
     liftIO $ do
         (_,_,_,_,_, x, y, _) <- queryPointer dpy w
         return (fromIntegral x, fromIntegral y)
 
 pointerProp :: X (Double, Double)
 pointerProp = do
-    XEnv { display = dpy } <- ask
+    XEnv { xdisplay = dpy } <- ask
     target <- currentWindow
     (x, y) <- relPointerPos target
     (_,_,_, w, h, _,_) <- liftIO $ getGeometry dpy target
@@ -331,19 +327,19 @@ pointerProp = do
 
 currentWindow :: X Window
 currentWindow = do
-    XEnv { display = dpy } <- ask
+    XEnv { xdisplay = dpy } <- ask
     (w, _) <- liftIO $ getInputFocus dpy
     return w
 
 setPointerPos :: Position -> Position -> X ()
 setPointerPos x y = do
-    XEnv { display = dpy, rootWindow' = root } <- ask
+    XEnv { xdisplay = dpy, xroot = root } <- ask
     liftIO $ warpPointer dpy 0 root 0 0 0 0 x y
     return ()
 
 inCurrentPos :: X a -> X a
 inCurrentPos f = do
-    XEnv { display = dpy } <- ask
+    XEnv { xdisplay = dpy } <- ask
     (x,y) <- pointerPos 
     w <- currentWindow
     ret <- f
@@ -353,7 +349,7 @@ inCurrentPos f = do
 
 modifyBindings :: (Bindings -> Bindings) -> X ()
 modifyBindings f = do
-    s@XControl { hkMap = b } <- get
+    s@XControl { xbindings = b } <- get
     setBindings (f b)
 
 eventToKM' :: XEventPtr -> IO (Time, KM)
@@ -373,11 +369,11 @@ eventToKM :: XEventPtr -> IO KM
 eventToKM ptr = snd `liftM` eventToKM' ptr
 
 askKM :: X KM
-askKM = ask >>= io . eventToKM . currentEvent    
+askKM = ask >>= io . eventToKM . xlastevent    
 
 askKeysym :: X (Maybe KeySym, String)
 askKeysym = do
-    XEnv { currentEvent = ev } <- ask
+    XEnv { xlastevent = ev } <- ask
     let kev = asKeyEvent ev
     io $ lookupString kev
 
@@ -392,11 +388,11 @@ unbind = modifyBindings . delete
 
 printBindings :: X ()
 printBindings =
-    get >>= liftIO . putStrLn . drawNMap . hkMap 
+    get >>= liftIO . putStrLn . drawNMap . xbindings 
 
 windowPid :: Window -> X (Maybe CPid)
 windowPid win = do
-    XEnv { display = dpy } <- ask
+    XEnv { xdisplay = dpy } <- ask
     liftIO $ do
         atom <- internAtom dpy "_NET_WM_PID" False
         mpid <- getWindowProperty32 dpy atom win
