@@ -29,16 +29,16 @@ import Prelude hiding (lookup)
 
 import System.Process (callCommand)
 
-runX :: (X a) -> XEnv -> XControl -> IO (a, XControl)
-runX (X a) env control = runStateT (runReaderT a env) control
+withX :: X a -> XEnv -> XControl -> IO (a, XControl)
+withX (X a) env control = runStateT (runReaderT a env) control
 
-runX' :: (X a) -> IO a
-runX' m = do
+runX :: (X a) -> IO a
+runX m = do
     dpy <- openDisplay ""
     let root = defaultRootWindow dpy
     ret <- allocaXEvent $ \e -> allocaXEvent $ \e' -> try $ 
-        fillBytes e 0 xeventsize >> runX m (XEnv dpy root e e') 
-        (XControl mempty False) -- :: IO (Either SomeException (a, XControl))
+        fillBytes e 0 xeventsize >> withX m (XEnv dpy root e e') 
+        defaultXControl { xtargets = [root] }
     closeDisplay dpy
     case ret of
         Left e -> error $ show (e :: SomeException)
@@ -48,7 +48,7 @@ runForkedX :: X () -> IO ForkedX
 runForkedX act = do
     initThreads
     mvar <- newEmptyMVar
-    thread <- forkIO $ runX' $ do
+    thread <- forkIO $ runX $ do
         xenv <- ask
         w <- io $ createSimpleWindow (xdisplay xenv) (xroot xenv) 0 0 1 1 0 0 0
         io $ putMVar mvar (xenv, w)
@@ -82,7 +82,7 @@ copyX act = do
         fillBytes ev' 0 xeventsize
         dpy' <- openDisplay (displayString dpy)
         let root' = defaultRootWindow dpy'
-        ret <- runX act (XEnv dpy' root' ev' ev'') xctrl >>= return . fst
+        ret <- withX act (XEnv dpy' root' ev' ev'') xctrl >>= return . fst
         closeDisplay dpy'
         return ret
 
@@ -224,7 +224,7 @@ forkX x = do
     xctrl <- get
     io $ forkIO $ allocaXEvent $ \ptr' -> do
         copyBytes ptr' ptr 196 
-        runX x xenv { xlastevent = ptr' } xctrl >> return ()
+        withX x xenv { xlastevent = ptr' } xctrl >> return ()
 
 forkX_ :: X a -> X ()
 forkX_ = void . forkX . void

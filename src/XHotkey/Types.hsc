@@ -134,11 +134,12 @@ data XEnv = XEnv
 
 data XControl = XControl
     { xbindings       :: Bindings
+    , xtargets        :: [Window]
     , xrepeatkeys     :: Bool
     } deriving Show
 
 defaultXControl :: XControl
-defaultXControl = XControl mempty False
+defaultXControl = XControl mempty [] False 
 
 data Hook 
     = OnClear (X ())
