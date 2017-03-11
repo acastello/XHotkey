@@ -105,6 +105,12 @@ setBindings binds = do
     mapM_ _ungrabKM (oldbase L.\\ newbase)
     put xctrl { xbindings = binds }
 
+-- called recursively
+
+grabbedLoop :: KM -> M.Map KM () -> NMap KM (X ()) -> X ()
+grabbedLoop km pressed actions
+
+
 mainLoop :: X ()
 mainLoop = do
     s@XControl { xbindings = hk } <- get
