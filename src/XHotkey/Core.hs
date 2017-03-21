@@ -108,7 +108,8 @@ setBindings binds = do
 -- called recursively
 
 grabbedLoop :: KM -> M.Map KM () -> NMap KM (X ()) -> X ()
-grabbedLoop km pressed actions
+grabbedLoop km pressed actions = do
+    undefined
 
 
 mainLoop :: X ()
@@ -274,9 +275,13 @@ windowsTree = do
     
 -- | Wait for a KeyPress, KeyRelease, ButtonPress or ButtonRelease, execute any
 -- ClientMessage if necessary, will throw an exception if 
-waitKM :: Bool -> X KM
-waitKM acceptsRepeats = do
-    xenv @ XEnv { xdisplay = dpy, xroot = root, xlastevent = ptr } <- ask
+waitKM :: X KM
+waitKM = do
+    XEnv { xdisplay = dpy
+         , xroot = root
+         , xlastevent = ptr
+         , xtempevent = tmp } <- ask
+    XControl { xrepeatkeys = acceptsRepeats } <- get
     liftIO $ nextEvent dpy ptr
     typ <- io $ get_EventType ptr
     if any (typ ==) [keyPress, keyRelease, buttonPress, buttonRelease] then do
@@ -291,7 +296,7 @@ waitKM acceptsRepeats = do
                     eventToKM' ptr
                 if t == t' && mainKey km == mainKey km' then do
                     io $ nextEvent dpy ptr
-                    waitKM acceptsRepeats
+                    waitKM 
                 else
                     return km
             else
@@ -299,7 +304,7 @@ waitKM acceptsRepeats = do
     else do
         when (typ == clientMessage) $
             join $ io $ consumeClientMessage ptr
-        waitKM acceptsRepeats
+        waitKM 
 
 exitX :: X ()
 exitX = mzero
