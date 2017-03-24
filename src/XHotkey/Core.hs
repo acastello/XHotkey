@@ -20,6 +20,7 @@ import Control.Monad.Reader
 
 import qualified Data.List as L
 import qualified Data.Map as M
+import qualified Data.Set as S
 import qualified Data.Tree as T
 
 import Foreign hiding (void)
@@ -105,15 +106,49 @@ setBindings binds = do
     mapM_ _ungrabKM (oldbase L.\\ newbase)
     put xctrl { xbindings = binds }
 
--- called recursively
+-- TODO: Change name
+mainLoop :: S.Set KeyCode -> X ()
+mainLoop set = do
+    XControl { xbindings = binds } <- get
+    grabbedLoop S.empty binds
+    return ()
 
-grabbedLoop :: KM -> M.Map KM () -> NMap KM (X ()) -> X ()
-grabbedLoop km pressed actions = do
-    undefined
+-- called recursively 
+grabbedLoop :: S.Set Keycode -> Bindings -> X ()
+grabbedLoop pressed map = do
+    XEnv { xdisplay = dpy, xroot = root } <- ask
+    km <- waitKM
+    io $ print km
+    let pressed' = procSet km
+    when (not (S.null pressed') && S.null pressed) $ io . void $
+        grabKeyboard dpy root True grabModeAsync grabModeAsync 0
+    when (S.null pressed' && not (S.null pressed)) $ io $ 
+        ungrabKeyboard dpy 0
+    case lookup km map of
+        Nothing -> do
+            let opkm = km { keyUp = not (keyUp km) }
+            unless (member km map) $ do
+                io $ putStrLn "fallin thru"
+                fallThrough
+            grabbedLoop pressed' map
+        Just (Right op) -> do
+            op
+            grabbedLoop pressed' map
+        Just (Left map') -> do
+            grabbedLoop pressed' map'
 
+    where
+        procSet :: KM -> S.Set KMitem
+        procSet km = 
+            if not (isKCode km) then
+                pressed
+            else if keyUp km then 
+                S.delete (mainKey km) pressed
+            else
+                S.insert (mainKey km) pressed
 
-mainLoop :: X ()
-mainLoop = do
+mainLoop' :: X ()
+mainLoop' = do
     s@XControl { xbindings = hk } <- get
     hk2 <- traverseKeys normalizeKM hk
     put $ s { xbindings = hk2 }
@@ -273,6 +308,15 @@ windowsTree = do
             wins' <- traverse windowsTree' wins
             return $ T.Node w wins'
     
+fallThrough :: X ()
+fallThrough = do
+    XEnv { xdisplay = dpy, xlastevent = lastev } <- ask
+    io $ do
+        (win, _) <- getInputFocus dpy 
+        setEventWindow win lastev
+        sendEvent dpy win False keyPressMask lastev
+    flushX
+
 -- | Wait for a KeyPress, KeyRelease, ButtonPress or ButtonRelease, execute any
 -- ClientMessage if necessary, will throw an exception if 
 waitKM :: X KM
@@ -292,12 +336,13 @@ waitKM = do
             nevs <- io $ eventsQueued dpy queuedAfterReading
             if nevs > 0 then do
                 (t', km') <- io $ do
-                    peekEvent dpy ptr
-                    eventToKM' ptr
+                    peekEvent dpy tmp
+                    eventToKM' tmp
                 if t == t' && mainKey km == mainKey km' then do
-                    io $ nextEvent dpy ptr
+                    io $ nextEvent dpy tmp
                     waitKM 
-                else
+                else do
+                    io $ copyBytes ptr tmp xeventsize
                     return km
             else
                 return km

@@ -294,6 +294,24 @@ instance IsString KM where
 fromChar :: Char -> KM
 fromChar = KM False 0 . KSym . fromIntegral . fromEnum
 
+-- helper boolean functions
+
+kisKeyCode :: KM -> Maybe KeyCode
+kisKeyCode KM { mainKey = KCode kc } = Just kc
+kisKeyCode _ = Nothing
+
+isKCode :: KM -> Bool
+isKCode KM { mainKey = KCode {}} = True
+isKCode _ = False
+
+isKSym :: KM -> Bool
+isKSym KM { mainKey = KSym {}} = True
+isKSym _ = False
+
+isMButton :: KM -> Bool
+isMButton KM { mainKey = MButton {}} = True
+isMButton _ = False
+
 up_ :: KM -> KM
 up_ (KM _ st k) = KM True st k
 
@@ -348,6 +366,9 @@ symfyKM (KM u s (KCode kc)) = do
     return (KM u s (KSym ks))
 symfyKM km = return km
 
+setEventWindow :: Window -> XEventPtr -> IO ()
+setEventWindow win ptr = do
+    (#poke XAnyEvent, window) ptr win
 
 type ClientMessage = XEventPtr
 
