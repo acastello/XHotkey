@@ -106,46 +106,75 @@ setBindings binds = do
     mapM_ _ungrabKM (oldbase L.\\ newbase)
     put xctrl { xbindings = binds }
 
--- TODO: Change name
-mainLoop :: S.Set KeyCode -> X ()
-mainLoop set = do
-    XControl { xbindings = binds } <- get
-    grabbedLoop S.empty binds
+setBindingsTargets :: Bindings -> [Window] -> X ()
+setBindingsTargets binds tars = do
     return ()
 
+-- TODO: Change name
+mainLoop :: X ()
+mainLoop = baseLoop S.empty False
+
+baseLoop :: S.Set KeyCode -> Bool -> X ()
+baseLoop oldp grabbed = do
+    XControl { xbindings = binds } <- get
+    km <- waitKM
+    let newp = procSet km
+    
+    grabbed' <- if not grabbed && S.size newp > 1 then do
+            _grabKeyboard
+            return True
+        else
+            return grabbed
+
+    newerp <- case lookup km binds of
+        Nothing -> do
+            return newp
+        Just (Right op) -> do
+            op
+            return newp
+        Just (Left map) -> do
+            grabbedLoop newp map
+
+    grabbed'' <- if grabbed' && S.size newerp == 0 then do
+            _ungrabKeyboard
+            return False
+        else
+            return grabbed'
+
+    baseLoop newerp grabbed''
+    return ()
+
+    where
+        procSet :: KM -> S.Set KeyCode
+        procSet km = maybe oldp (\k -> 
+            if keyUp km then 
+                S.delete k oldp
+            else
+                S.insert k oldp) (kisKeyCode km)
+
 -- called recursively 
-grabbedLoop :: S.Set Keycode -> Bindings -> X ()
+grabbedLoop :: S.Set KeyCode -> Bindings -> X (S.Set KeyCode)
 grabbedLoop pressed map = do
     XEnv { xdisplay = dpy, xroot = root } <- ask
     km <- waitKM
-    io $ print km
+    -- io $ print km
     let pressed' = procSet km
-    when (not (S.null pressed') && S.null pressed) $ io . void $
-        grabKeyboard dpy root True grabModeAsync grabModeAsync 0
-    when (S.null pressed' && not (S.null pressed)) $ io $ 
-        ungrabKeyboard dpy 0
     case lookup km map of
         Nothing -> do
-            let opkm = km { keyUp = not (keyUp km) }
-            unless (member km map) $ do
-                io $ putStrLn "fallin thru"
-                fallThrough
-            grabbedLoop pressed' map
+            return pressed'
         Just (Right op) -> do
             op
-            grabbedLoop pressed' map
+            return pressed'
         Just (Left map') -> do
             grabbedLoop pressed' map'
 
     where
-        procSet :: KM -> S.Set KMitem
-        procSet km = 
-            if not (isKCode km) then
-                pressed
-            else if keyUp km then 
-                S.delete (mainKey km) pressed
+        procSet :: KM -> S.Set KeyCode
+        procSet km = maybe pressed (\k -> 
+            if keyUp km then 
+                S.delete k pressed
             else
-                S.insert (mainKey km) pressed
+                S.insert k pressed) (kisKeyCode km)
 
 mainLoop' :: X ()
 mainLoop' = do
@@ -241,7 +270,15 @@ mainLoop' = do
       isMButton (KM _ _ (MButton _)) = True
       isMButton _ = False
         
-            
+_grabKeyboard :: X ()
+_grabKeyboard = do
+    XEnv { xdisplay = dpy, xroot = root } <- ask
+    void $ io $ grabKeyboard dpy root True grabModeAsync grabModeAsync 0 
+
+_ungrabKeyboard :: X ()
+_ungrabKeyboard = do
+    XEnv { xdisplay = dpy } <- ask
+    void $ io $ ungrabKeyboard dpy 0
     
 _grabKM :: KM -> X ()
 _grabKM k = do
@@ -454,4 +491,13 @@ windowPid win = do
         mpid <- getWindowProperty32 dpy atom win
         return $ fmap (fromIntegral . head) mpid
 
-
+test :: IO ()
+test = runX $ do
+    bind ["q"] exitX
+    bind ["w"] printBindings
+    bind ["1"] (io $ putStrLn "1 down")
+    bind ["1 up"] (io $ putStrLn "1 up")
+    bind ["2"] (io $ putStrLn "2 down")
+    bind ["2 up"] (io $ putStrLn "2 up")
+    bind ["3", "1"] (io $ putStrLn "3, 1")
+    mainLoop
