@@ -39,7 +39,7 @@ runX m = do
     let root = defaultRootWindow dpy
     ret <- allocaXEvent $ \e -> allocaXEvent $ \e' -> try $ 
         fillBytes e 0 xeventsize >> withX m (XEnv dpy root e e') 
-        defaultXControl { xtargets = [root] }
+        (defaultXControl dpy)
     closeDisplay dpy
     case ret of
         Left e -> error $ show (e :: SomeException)
@@ -92,6 +92,8 @@ attachTo ch pa x y = do
     XEnv { xdisplay = dpy } <- ask
     liftIO $ reparentWindow dpy ch pa x y
         
+setAutorepeat :: Bool -> X ()
+setAutorepeat whether = modify $ \xctrl -> xctrl { xrepeatkeys = whether }
 
 waitX :: X ()
 waitX = do
@@ -99,16 +101,28 @@ waitX = do
 
 setBindings :: Bindings -> X ()
 setBindings binds = do
-    xctrl <- get
-    let oldbase = rootKeys (xbindings xctrl)
-        newbase = rootKeys binds
-    mapM_ _grabKM (newbase L.\\ oldbase)
-    mapM_ _ungrabKM (oldbase L.\\ newbase)
-    put xctrl { xbindings = binds }
+    XControl { xtargets = tars } <- get
+    setBindingsTargets binds tars
+
+setTargets :: [Window] -> X ()
+setTargets tars = do
+    XControl { xbindings = binds } <- get
+    setBindingsTargets binds tars
 
 setBindingsTargets :: Bindings -> [Window] -> X ()
 setBindingsTargets binds tars = do
-    return ()
+    xctrl @ XControl { xbindings = oldbinds, xtargets = oldtars } <- get
+    let oldbase = rootKeys oldbinds
+        newbase = rootKeys binds
+    mapM2 _ungrabKM oldbase (oldtars L.\\ tars)
+    mapM2 _ungrabKM (oldbase L.\\ newbase) (tars L.\\ oldtars)
+    mapM2 _grabKM newbase (tars L.\\ oldtars)
+    mapM2 _grabKM (newbase L.\\ oldbase) tars
+
+    put xctrl { xbindings = binds, xtargets = tars }
+    
+    where
+        mapM2 f xs ys = sequence_ [f x y | x <- xs, y <- ys]
 
 -- TODO: Change name
 mainLoop :: X ()
@@ -176,7 +190,7 @@ grabbedLoop pressed map = do
             else
                 S.insert k pressed) (kisKeyCode km)
 
-mainLoop' :: X ()
+{- mainLoop' :: X ()
 mainLoop' = do
     s@XControl { xbindings = hk } <- get
     hk2 <- traverseKeys normalizeKM hk
@@ -269,6 +283,7 @@ mainLoop' = do
       isMButton :: KM -> Bool
       isMButton (KM _ _ (MButton _)) = True
       isMButton _ = False
+        -}
         
 _grabKeyboard :: X ()
 _grabKeyboard = do
@@ -280,21 +295,24 @@ _ungrabKeyboard = do
     XEnv { xdisplay = dpy } <- ask
     void $ io $ ungrabKeyboard dpy 0
     
-_grabKM :: KM -> X ()
-_grabKM k = do
+_grabKM :: KM -> Window -> X ()
+_grabKM k win = do
     XEnv { xdisplay = dpy, xroot = root } <- ask
     k @ (KM _ st k') <- normalizeKM k
     case k' of
-        KCode c -> liftIO $ grabKey dpy c st root False grabModeAsync grabModeAsync
-        MButton b -> liftIO $ grabButton dpy b st root False (buttonPressMask .|. buttonReleaseMask) grabModeAsync grabModeAsync root 0
+        KCode c -> liftIO $ grabKey dpy c st win False grabModeAsync 
+                                grabModeAsync
+        MButton b -> liftIO $ grabButton dpy b st win False 
+                                (buttonPressMask .|. buttonReleaseMask) 
+                                grabModeAsync grabModeAsync root 0
 
-_ungrabKM :: KM -> X ()
-_ungrabKM k = do
+_ungrabKM :: KM -> Window -> X ()
+_ungrabKM k win = do
     XEnv { xdisplay = dpy, xroot = root } <- ask
     (KM _ st k') <- normalizeKM k
     case k' of
-        KCode c -> liftIO $ ungrabKey dpy c st root
-        MButton b -> liftIO $ ungrabButton dpy b st root
+        KCode c -> liftIO $ ungrabKey dpy c st win
+        MButton b -> liftIO $ ungrabButton dpy b st win
     return ()
 
 forkX :: X () -> X ThreadId

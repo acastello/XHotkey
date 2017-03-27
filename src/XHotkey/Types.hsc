@@ -138,8 +138,8 @@ data XControl = XControl
     , xrepeatkeys     :: Bool
     } deriving Show
 
-defaultXControl :: XControl
-defaultXControl = XControl mempty [] False 
+defaultXControl :: Display -> XControl
+defaultXControl dpy = XControl mempty [defaultRootWindow dpy] False 
 
 data Hook 
     = OnClear (X ())
