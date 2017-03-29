@@ -142,12 +142,20 @@ baseLoop oldp grabbed = do
 
     newerp <- case lookup km binds of
         Nothing -> do
+            when (not $ member km { keyUp = not $ keyUp km } binds) $ do
+                fallThrough
             return newp
         Just (Right op) -> do
             op
             return newp
         Just (Left map) -> do
-            grabbedLoop newp map
+            if not grabbed' then do
+                _grabKeyboard
+                ret <- grabbedLoop newp map
+                _ungrabKeyboard
+                return ret
+            else
+                grabbedLoop newp map
 
     grabbed'' <- if grabbed' && S.size newerp == 0 then do
             _ungrabKeyboard
@@ -156,7 +164,6 @@ baseLoop oldp grabbed = do
             return grabbed'
 
     baseLoop newerp grabbed''
-    return ()
 
     where
         procSet :: KM -> S.Set KeyCode
@@ -393,7 +400,7 @@ waitKM = do
                 (t', km') <- io $ do
                     peekEvent dpy tmp
                     eventToKM' tmp
-                if t == t' && mainKey km == mainKey km' then do
+                if t' - t < 40 && km' == km { keyUp = not $ keyUp km } then do
                     io $ nextEvent dpy tmp
                     waitKM 
                 else do
@@ -518,4 +525,6 @@ test = runX $ do
     bind ["2"] (io $ putStrLn "2 down")
     bind ["2 up"] (io $ putStrLn "2 up")
     bind ["3", "1"] (io $ putStrLn "3, 1")
+    bind ["ctrl-w"] (currentWindow >>= setTargets . pure)
+    bind ["ctrl-r"] (ask >>= setTargets . pure . xroot)
     mainLoop
