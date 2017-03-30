@@ -152,7 +152,8 @@ baseLoop oldp grabbed = do
             if not grabbed' then do
                 _grabKeyboard
                 ret <- grabbedLoop newp map
-                _ungrabKeyboard
+                when (S.size ret == 0)
+                    _ungrabKeyboard
                 return ret
             else
                 grabbedLoop newp map
