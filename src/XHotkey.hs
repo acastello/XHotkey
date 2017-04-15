@@ -1,7 +1,14 @@
 module XHotkey 
   ( module XHotkey.Types
   , module XHotkey.Core
+  , module Graphics.X11.Types
+  , module Graphics.X11.ExtraTypes
+  , module Control.Monad.State
+  , module Control.Monad.Reader
   ) where  
+
+import Graphics.X11.Types
+import Graphics.X11.ExtraTypes
 
 import XHotkey.Types
 import XHotkey.Core
@@ -9,7 +16,9 @@ import Data.NMap
 
 import Data.Word
 
+import Control.Monad
 import Control.Monad.State
+import Control.Monad.Reader 
 
 
 data D = A Int | B Word16 | C Word32
@@ -39,4 +48,4 @@ binds' = mapKeys read $ fromList
     ]
     
 
-test x = runX' $ setBindings binds' >> x
+test x = runX $ setBindings binds' >> x

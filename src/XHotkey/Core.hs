@@ -30,6 +30,8 @@ import Prelude hiding (lookup)
 
 import System.Process (callCommand)
 
+import Text.Printf (printf)
+
 withX :: X a -> XEnv -> XControl -> IO (a, XControl)
 withX (X a) env control = runStateT (runReaderT a env) control
 
@@ -110,8 +112,9 @@ setTargets tars = do
     setBindingsTargets binds tars
 
 setBindingsTargets :: Bindings -> [Window] -> X ()
-setBindingsTargets binds tars = do
+setBindingsTargets rawbinds tars = do
     xctrl @ XControl { xbindings = oldbinds, xtargets = oldtars } <- get
+    binds <- traverseKeys normalizeKM rawbinds
     let oldbase = rootKeys oldbinds
         newbase = rootKeys binds
     mapM2 _ungrabKM oldbase (oldtars L.\\ tars)
@@ -508,6 +511,15 @@ unbind = modifyBindings . delete
 printBindings :: X ()
 printBindings =
     get >>= liftIO . putStrLn . drawNMap . xbindings 
+
+printTargets :: X ()
+printTargets = do
+    XEnv { xdisplay = dpy } <- ask
+    XControl { xtargets = targets } <- get 
+    strs <- liftIO $ forM targets $ \win -> do
+        ch <- getClassHint dpy win
+        return $ printf "%#x %s %s" win (show $ resName ch) (show $ resClass ch)
+    liftIO $ putStrLn $ concat $ ["[", concat $ L.intersperse ", " strs, "]"]
 
 windowPid :: Window -> X (Maybe CPid)
 windowPid win = do

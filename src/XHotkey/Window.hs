@@ -143,7 +143,7 @@ runWChan = runMChan
 
 win :: WinRes -> XWin a -> X a
 win (WinRes bordersz bordercol bgcolor fgcolor fontn) act = (io initThreads >>) $ copyX $ do
-    XEnv { display = dpy, rootWindow' = root } <- ask
+    XEnv { xdisplay = dpy, xroot = root } <- ask
     let screenn = defaultScreen dpy
         visual = defaultVisual dpy screenn
         colormap = defaultColormap dpy screenn
