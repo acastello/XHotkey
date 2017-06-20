@@ -1,4 +1,4 @@
-{-# LANGUAGE DoAndIfThenElse, OverloadedStrings, BangPatterns #-}
+{-# LANGUAGE DoAndIfThenElse, OverloadedStrings, BangPatterns, CPP #-}
 
 module XHotkey.Core where
 
@@ -31,6 +31,8 @@ import Prelude hiding (lookup)
 import System.Process (callCommand)
 
 import Text.Printf (printf)
+
+#define DEBUG 
 
 withX :: X a -> XEnv -> XControl -> IO (a, XControl)
 withX (X a) env control = runStateT (runReaderT a env) control
@@ -154,12 +156,12 @@ baseLoop oldp grabbed = do
         Just (Left map) -> do
             if not grabbed' then do
                 _grabKeyboard
-                ret <- grabbedLoop newp map
+                ret <- grabbedLoop' newp map
                 when (S.size ret == 0)
                     _ungrabKeyboard
                 return ret
             else
-                grabbedLoop newp map
+                grabbedLoop' newp map
 
     grabbed'' <- if grabbed' && S.size newerp == 0 then do
             _ungrabKeyboard
@@ -178,12 +180,12 @@ baseLoop oldp grabbed = do
                 S.insert k oldp) (kisKeyCode km)
 
 -- called recursively 
-grabbedLoop :: S.Set KeyCode -> Bindings -> X (S.Set KeyCode)
-grabbedLoop pressed map = do
+grabbedLoop' :: S.Set KeyCode -> Bindings -> X (S.Set KeyCode)
+grabbedLoop' pressed map = do
     XEnv { xdisplay = dpy, xroot = root } <- ask
     km <- waitKM
     -- io $ print km
-    let pressed' = procSet km
+    let pressed' = procSet pressed km
     case lookup km map of
         Nothing -> do
             return pressed'
@@ -191,15 +193,21 @@ grabbedLoop pressed map = do
             op
             return pressed'
         Just (Left map') -> do
-            grabbedLoop pressed' map'
+            grabbedLoop' pressed' map'
 
     where
-        procSet :: KM -> S.Set KeyCode
-        procSet km = maybe pressed (\k -> 
+        procSet :: S.Set KeyCode -> KM -> S.Set KeyCode
+        procSet set km = maybe set (\k -> 
             if keyUp km then 
                 S.delete k pressed
             else
                 S.insert k pressed) (kisKeyCode km)
+
+startGrabbed :: KM -> X ()
+startGrabbed km = do
+
+    if isKey
+    runStateT grabbedLoop $ GrabState False False 
 
 {- mainLoop' :: X ()
 mainLoop' = do
@@ -242,7 +250,7 @@ mainLoop' = do
                         grabKeyboard dpy root True grabModeAsync grabModeAsync currentTime
                         grabPointer dpy root True (buttonPressMask .|. buttonReleaseMask) grabModeAsync grabModeAsync 0 0 0 
                         -- maskEvent dpy (buttonPressMask .|. buttonReleaseMask .|. keyPressMask .|. keyReleaseMask) ptr
-                    x <- grabbedLoop tmp m
+                    x <- grabbedLoop' tmp m
                     liftIO $ do 
                         ungrabKeyboard dpy currentTime
                         ungrabPointer dpy currentTime
@@ -273,8 +281,8 @@ mainLoop' = do
             return Nothing
         else
             return (Just km)
-      grabbedLoop :: XEventPtr -> Bindings -> X (X ())
-      grabbedLoop tmp m = do
+      grabbedLoop' :: XEventPtr -> Bindings -> X (X ())
+      grabbedLoop' tmp m = do
         XEnv { xdisplay = dpy, xroot = root, xlastevent = ptr } <- ask
         liftIO $ nextEvent dpy ptr
         nevs <- io $ eventsQueued dpy queuedAfterReading
@@ -283,7 +291,7 @@ mainLoop' = do
             km' <- km
             x <- lookup km' m
             case x of
-                Left m' -> return $ grabbedLoop tmp m'
+                Left m' -> return $ grabbedLoop' tmp m'
                 Right x -> return (return x)
             of
             Just x -> x
@@ -396,6 +404,9 @@ waitKM = do
     typ <- io $ get_EventType ptr
     if any (typ ==) [keyPress, keyRelease, buttonPress, buttonRelease] then do
         (t,km) <- io $ eventToKM' ptr
+#ifdef DEBUG
+        io $ printf "[waitKM] received %s\n" (show km)
+#endif
         if acceptsRepeats then
             return km
         else do

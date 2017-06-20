@@ -21,6 +21,7 @@ import Data.IORef
 import Data.Maybe (fromMaybe)
 import qualified Data.NMap as M
 import Data.NMap hiding (lookup)
+import qualified Data.Set as S
 import Data.String
 import Data.Word
 
@@ -163,6 +164,15 @@ newtype X a = X (ReaderT XEnv (StateT XControl IO) a)
 
 instance Show (X a) where
     show _ = "X ()"    
+
+data GrabState = GrabState
+  { gKeyboard :: Bool
+  , gPointer  :: Bool
+  , gKeys     :: S.Set KeyCode
+  , gButtons  :: S.Set Button
+  }
+
+type GrabEnv = StateT GrabState X 
 
 type XChan = MChan X
 
