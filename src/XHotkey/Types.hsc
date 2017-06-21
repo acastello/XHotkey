@@ -170,6 +170,7 @@ data GrabState = GrabState
   , gPointer  :: Bool
   , gKeys     :: S.Set KeyCode
   , gButtons  :: S.Set Button
+  , gMap      :: Bindings
   }
 
 type GrabEnv = StateT GrabState X 

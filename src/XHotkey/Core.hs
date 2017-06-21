@@ -32,7 +32,6 @@ import System.Process (callCommand)
 
 import Text.Printf (printf)
 
-#define DEBUG 
 
 withX :: X a -> XEnv -> XControl -> IO (a, XControl)
 withX (X a) env control = runStateT (runReaderT a env) control
@@ -130,11 +129,15 @@ setBindingsTargets rawbinds tars = do
         mapM2 f xs ys = sequence_ [f x y | x <- xs, y <- ys]
 
 -- TODO: Change name
-mainLoop :: X ()
-mainLoop = baseLoop S.empty False
+mainLoop' :: X ()
+mainLoop' = baseLoop' S.empty False
 
-baseLoop :: S.Set KeyCode -> Bool -> X ()
-baseLoop oldp grabbed = do
+mainLoop :: X ()
+mainLoop = void $ runStateT baseLoop 
+              $ GrabState False False mempty mempty mempty
+
+baseLoop' :: S.Set KeyCode -> Bool -> X ()
+baseLoop' oldp grabbed = do
     XControl { xbindings = binds } <- get
     km <- waitKM
     let newp = procSet km
@@ -169,7 +172,7 @@ baseLoop oldp grabbed = do
         else
             return grabbed'
 
-    baseLoop newerp grabbed''
+    baseLoop' newerp grabbed''
 
     where
         procSet :: KM -> S.Set KeyCode
@@ -178,6 +181,53 @@ baseLoop oldp grabbed = do
                 S.delete k oldp
             else
                 S.insert k oldp) (kisKeyCode km)
+
+baseLoop :: GrabEnv ()
+baseLoop = do
+    checkgrabs
+    km <- lift waitKM
+    procset km
+    XControl { xbindings = map } <- lift get
+    GrabState { gKeys = lastmap } <- get
+    case lookup km map of
+        Nothing -> do
+            when (not $ member km { keyUp = not $ keyUp km } map) $ do
+                lift fallThrough
+        Just (Right op) -> do
+            lift op
+        Just (Left map') -> do
+            st @ GrabState { gKeyboard = grabbed } <- get
+            unless grabbed $ do
+                lift _grabKeyboard
+                put st { gKeyboard = True }
+            modify $ \s -> s { gMap = map' }
+            grabbedLoop km
+    baseLoop
+    where
+        procset :: KM -> GrabEnv ()
+        procset km = do
+            st @ GrabState { gKeys = keys, gButtons = buttons } <- get
+            case km of
+                KM { mainKey = KCode kc } -> do
+                    let f = if keyUp km then S.delete else S.insert
+                    put st { gKeys = f kc keys }
+                KM { mainKey = MButton bt } -> do
+                    let f = if keyUp km then S.delete else S.insert
+                    put st { gButtons = f bt buttons }
+                _ -> return ()
+        checkgrabs :: GrabEnv ()
+        checkgrabs = do
+            st @ GrabState { gKeys = keys, gKeyboard = keyboard } <- get
+            when (not keyboard && not (S.null keys)) $ do
+                lift _grabKeyboard
+                put st { gKeyboard = True }
+            when (keyboard && S.null keys) $ do
+                lift _ungrabKeyboard
+                put st { gKeyboard = False }
+        resetmap :: GrabEnv ()
+        resetmap = do
+            XControl { xbindings = map } <- lift get
+            modify $ \s -> s { gMap = map }
 
 -- called recursively 
 grabbedLoop' :: S.Set KeyCode -> Bindings -> X (S.Set KeyCode)
@@ -203,11 +253,50 @@ grabbedLoop' pressed map = do
             else
                 S.insert k pressed) (kisKeyCode km)
 
-startGrabbed :: KM -> X ()
-startGrabbed km = do
+startGrabbed :: KM -> Bindings -> X ()
+startGrabbed km map = void $ case km of
+    KM { mainKey = KCode kc } -> do
+        let set = if keyUp km then mempty else S.singleton kc
+        _grabKeyboard 
+        runStateT (grabbedLoop km)
+            $ GrabState True False set mempty map
+        _ungrabKeyboard
 
-    if isKey
-    runStateT grabbedLoop $ GrabState False False 
+grabbedLoop :: KM -> GrabEnv ()
+grabbedLoop orig = do
+    GrabState { gMap = map } <- get
+    km <- lift waitKM
+    procset km
+    case lookup km map of
+        Nothing -> do
+            when (member km { keyUp = not $ keyUp km } map) $ do
+                redo
+        Just (Right op) -> do
+            lift op 
+            redo
+        Just (Left map') -> do
+            modify $ \s -> s { gMap = map' }
+            grabbedLoop km
+            redo
+    where
+        redo :: GrabEnv ()
+        redo = when (not $ keyUp orig) $ do
+            GrabState { gKeys = keys, gButtons = buttons } <- get
+            flip when (grabbedLoop orig) $ case orig of
+                KM { mainKey = KCode kc } -> kc `S.member` keys
+                KM { mainKey = MButton bt } -> bt `S.member` buttons
+                _ -> False
+        procset :: KM -> GrabEnv ()
+        procset km = do
+            st @ GrabState { gKeys = keys, gButtons = buttons } <- get
+            case km of
+                KM { mainKey = KCode kc } -> do
+                    let f = if keyUp km then S.delete else S.insert
+                    put st { gKeys = f kc keys }
+                KM { mainKey = MButton bt } -> do
+                    let f = if keyUp km then S.delete else S.insert
+                    put st { gButtons = f bt buttons }
+                _ -> return ()
 
 {- mainLoop' :: X ()
 mainLoop' = do
