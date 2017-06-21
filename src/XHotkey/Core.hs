@@ -253,15 +253,6 @@ grabbedLoop' pressed map = do
             else
                 S.insert k pressed) (kisKeyCode km)
 
-startGrabbed :: KM -> Bindings -> X ()
-startGrabbed km map = void $ case km of
-    KM { mainKey = KCode kc } -> do
-        let set = if keyUp km then mempty else S.singleton kc
-        _grabKeyboard 
-        runStateT (grabbedLoop km)
-            $ GrabState True False set mempty map
-        _ungrabKeyboard
-
 grabbedLoop :: KM -> GrabEnv ()
 grabbedLoop orig = do
     GrabState { gMap = map } <- get
