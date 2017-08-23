@@ -451,16 +451,27 @@ flushX = do
     liftIO $flush dpy
 
 windowsTree :: X (T.Tree Window)
-windowsTree = do
-    XEnv { xroot = root } <- ask
-    windowsTree' root
-    where
-        windowsTree' :: Window -> X (T.Tree Window)
-        windowsTree' w = do
-            dpy <- return . xdisplay =<< ask
-            wins <- io $ return . (\(_,_,y) -> y) =<< queryTree dpy w 
-            wins' <- traverse windowsTree' wins
-            return $ T.Node w wins'
+windowsTree = forWindows return 
+
+forWindows :: (Window -> X a) -> X (T.Tree a)
+forWindows f = do
+    XEnv { xroot = root, xdisplay = dpy } <- ask
+    forWin dpy root where
+    forWin dpy win = do
+        children <- io $ return . (\(_,_,y) -> y) =<< queryTree dpy win
+        liftM2 T.Node (f win) $ mapM (forWin dpy) children
+
+foldWindows :: (b -> Window -> X b) -> b -> X b
+foldWindows op e = do
+    XEnv { xroot = root, xdisplay = dpy } <- ask
+    forWinA dpy e root where
+    forWinA dpy e win = do
+        ret <- op e win
+        children <- io $ return . (\(_,_,y) -> y) =<< queryTree dpy win 
+        liftIO $ forM_ children (addToSaveSet dpy)
+        ret <- foldM (forWinA dpy) ret children
+        liftIO $ removeFromSaveSet dpy win
+        return ret
     
 fallThrough :: X ()
 fallThrough = do
