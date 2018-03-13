@@ -450,16 +450,31 @@ flushX = do
     XEnv { xdisplay = dpy } <- ask
     liftIO $flush dpy
 
+windowTree :: Window -> X ([Window], T.Tree Window)
+windowTree win = do
+    XEnv { xroot = root, xdisplay = dpy } <- ask
+    (_,p,c) <- io (queryTree dpy win)
+    liftM2 (,) (parents dpy root p) (T.Node win <$> mapChildren return `mapM` c)
+    where
+    parents dpy root w
+      | root == w = return [w]
+      | otherwise = do
+          (_,p,_) <- io (queryTree dpy w)
+          (++ [w]) <$> parents dpy root p
+
 windowsTree :: X (T.Tree Window)
 windowsTree = forWindows return 
 
+mapChildren :: (Window -> X a) -> Window -> X (T.Tree a)
+mapChildren f win = do
+    XEnv { xdisplay = dpy } <- ask
+    children <- (\(_,_,z) -> z) <$> io (queryTree dpy win)
+    liftM2 T.Node (f win) $ mapM (mapChildren f) children
+
 forWindows :: (Window -> X a) -> X (T.Tree a)
 forWindows f = do
-    XEnv { xroot = root, xdisplay = dpy } <- ask
-    forWin dpy root where
-    forWin dpy win = do
-        children <- io $ return . (\(_,_,y) -> y) =<< queryTree dpy win
-        liftM2 T.Node (f win) $ mapM (forWin dpy) children
+    XEnv { xroot = root } <- ask
+    mapChildren f root
 
 foldWindows :: (b -> Window -> X b) -> b -> X b
 foldWindows op e = do
