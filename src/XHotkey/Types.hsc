@@ -1,6 +1,6 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving, StandaloneDeriving #-}
 
-module XHotkey.Types 
+module XHotkey.Types
     where
 
 import Control.Applicative
@@ -32,10 +32,10 @@ import qualified Text.Read as T
 import Text.Read.Lex (numberToInteger)
 import Numeric (showHex)
 
-infixl 7 .<. 
+infixl 7 .<.
 word .<. shift = shiftL word shift
 
-infixl 7 .>. 
+infixl 7 .>.
 word .>. shift = shiftR word shift
 
 #include <X11/Xlib.h>
@@ -64,7 +64,7 @@ closeMChan (MChan_ v1 _ st) = io $ do
         putMVar v1 (Left ())
         writeIORef st False
     else do
-        tryPutMVar v1 (Left ()) 
+        tryPutMVar v1 (Left ())
         return ()
 
 evalMChan :: MonadIO m' => MChan m a -> m a -> m' a
@@ -72,7 +72,7 @@ evalMChan (MChan_ v1 v2 st) action = io $ do
     running <- readIORef st
     if running then do
         putMVar v1 (Right action)
-        takeMVar v2 
+        takeMVar v2
     else
         error "MChan is closed."
 
@@ -97,7 +97,7 @@ tryEvalMChan (MChan_ v1 v2 st) action = io $ do
     running <- readIORef st
     if running then do
         succ <- tryPutMVar v1 (Right action)
-        if succ then 
+        if succ then
             Just <$> takeMVar v2
         else
             return Nothing
@@ -140,9 +140,9 @@ data XControl = XControl
     } deriving Show
 
 defaultXControl :: Display -> XControl
-defaultXControl dpy = XControl mempty [defaultRootWindow dpy] False 
+defaultXControl dpy = XControl mempty [defaultRootWindow dpy] False
 
-data Hook 
+data Hook
     = OnClear (X ())
     | OnKM (KM -> X ())
     | OnExit (X ())
@@ -160,10 +160,10 @@ drawBindings = drawNMap
 -- | X reader monad
 newtype X a = X (ReaderT XEnv (StateT XControl IO) a)
     deriving (Functor, Applicative, Monad, MonadReader XEnv, MonadState XControl
-             , MonadIO, Alternative, MonadPlus)
+             , MonadIO, Alternative, MonadPlus, MonadFail)
 
 instance Show (X a) where
-    show _ = "X ()"    
+    show _ = "X ()"
 
 data GrabState = GrabState
   { gKeyboard :: Bool
@@ -173,7 +173,7 @@ data GrabState = GrabState
   , gMap      :: Bindings
   }
 
-type GrabEnv = StateT GrabState X 
+type GrabEnv = StateT GrabState X
 
 type XChan = MChan X
 
@@ -186,7 +186,7 @@ closeXChan xc = do
     closeMChan xc
 
 -- | Key and Mouse wrapper
-data KM = KM 
+data KM = KM
     { keyUp :: Bool
     , keyModifiers :: Modifier
     , mainKey :: KMitem }
@@ -194,7 +194,7 @@ data KM = KM
 
 nullKM = KM False 0 (KCode 0 )
 
-data KMitem = 
+data KMitem =
         KCode KeyCode
       | KSym KeySym
       | MButton Button
@@ -219,11 +219,11 @@ instance Enum KMitem where
               n'' = n .&. 0x1ffffff
 
 instance Read KMitem where
-        readPrec = T.parens $ do 
-                T.choice 
+        readPrec = T.parens $ do
+                T.choice
                     [ do
                             str <- T.choice
-                               [do 
+                               [do
                                     T.Ident str' <- T.lexP
                                     return str'
                                ,do
@@ -245,7 +245,7 @@ instance Read KMitem where
                             return (MButton n) ]
 
 instance Show KM where
-    show (KM up mod k) = 
+    show (KM up mod k) =
         let s = foldMap state' (listModifiers mod)
         in s ++ (show k) ++ (if up then " Up" else "")
         where state' kc = fromMaybe "" $ lookup kc
@@ -256,7 +256,7 @@ instance Show KM where
                 , (button4Mask, "Btn4-"), (button5Mask, "Btn5-") ]
 
 instance Read KM where
-    readPrec = T.parens $ do 
+    readPrec = T.parens $ do
         s <- readState 0
         kc <- T.readPrec
         onrel <- T.choice
@@ -339,7 +339,7 @@ ctrl_ :: KM -> KM
 ctrl_ = addModifier controlMask
 
 mod1_ :: KM -> KM
-mod1_ = addModifier mod1Mask 
+mod1_ = addModifier mod1Mask
 alt_ = mod1_
 
 mod2_ :: KM -> KM
@@ -428,6 +428,6 @@ io :: MonadIO m => IO a -> m a
 io = liftIO
 
 lit :: String -> T.ReadPrec String
-lit = mapM (\c -> T.get >>= \c' -> 
+lit = mapM (\c -> T.get >>= \c' ->
     if toLower c' == toLower c then return c' else fail "")
 
