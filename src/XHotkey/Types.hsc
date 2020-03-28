@@ -1,7 +1,6 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving, StandaloneDeriving #-}
 
-module XHotkey.Types
-    where
+module XHotkey.Types where
 
 import Control.Applicative
 import Control.Concurrent

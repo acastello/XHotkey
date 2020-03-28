@@ -12,8 +12,8 @@ library
     hs-source-dirs:     src
     exposed-modules:    XHotkey
                         XHotkey.Types
-                        XHotkey.Core 
-                        XHotkey.Window 
+                        XHotkey.Core
+                        XHotkey.Window
     extensions:     DoAndIfThenElse
     build-depends:      base,
                         unix,
