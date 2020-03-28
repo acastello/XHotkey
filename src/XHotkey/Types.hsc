@@ -5,6 +5,7 @@ module XHotkey.Types where
 import Control.Applicative
 import Control.Concurrent
 import Control.Exception
+import Control.Monad.Fail (MonadFail)
 import Control.Monad.Reader
 import Control.Monad.State
 
