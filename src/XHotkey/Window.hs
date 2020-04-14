@@ -181,14 +181,14 @@ win (WinRes bordersz bordercol bgcolor fgcolor fontn) act = (io initThreads >>) 
     mv <- newEmptyMVar :: IO (MVar ())
     mapWindow dpy window
     flush dpy
-    proc <- io $ forkIO $ allocaXEvent $ \ev -> flip runReaderT env $ do
+    _ <- (io $ forkIO $ allocaXEvent $ \ev -> flip runReaderT env $ do
         dowhile $ do
             io $ nextEvent dpy ev
             ev' <- io $ getEvent ev
             f <- io $ readIORef ev_f
             maybe (return ()) ($ ev') $ M.lookup (ev_event_type ev') f
             return (ev_event_type ev' /= destroyNotify)
-        io $ putMVar mv ()
+        io $ putMVar mv ())
 
     ret <- runReaderT act env
     io $ destroyWindow dpy window

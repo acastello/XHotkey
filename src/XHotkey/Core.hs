@@ -36,7 +36,7 @@ import Text.Printf (printf)
 withX :: X a -> XEnv -> XControl -> IO (a, XControl)
 withX (X a) env control = runStateT (runReaderT a env) control
 
-runX :: (X a) -> IO a
+runX :: X a -> IO a
 runX m = do
     dpy <- openDisplay ""
     let root = defaultRootWindow dpy
@@ -80,7 +80,7 @@ killForkedX fx @ (_,_,tid) = do
 
 copyX :: X a -> X a
 copyX act = do
-    xenv @ XEnv { xdisplay = dpy, xroot = root } <- ask
+    XEnv { xdisplay = dpy } <- ask
     xctrl <- get
     io $ allocaXEvent $ \ev' -> allocaXEvent $ \ev'' -> do
         fillBytes ev' 0 xeventsize
@@ -156,15 +156,15 @@ baseLoop' oldp grabbed = do
         Just (Right op) -> do
             op
             return newp
-        Just (Left map) -> do
+        Just (Left gmap) -> do
             if not grabbed' then do
                 _grabKeyboard
-                ret <- grabbedLoop' newp map
+                ret <- grabbedLoop' newp gmap
                 when (S.size ret == 0)
                     _ungrabKeyboard
                 return ret
             else
-                grabbedLoop' newp map
+                grabbedLoop' newp gmap
 
     grabbed'' <- if grabbed' && S.size newerp == 0 then do
             _ungrabKeyboard
@@ -187,11 +187,10 @@ baseLoop = do
     checkgrabs
     km <- lift waitKM
     procset km
-    XControl { xbindings = map } <- lift get
-    GrabState { gKeys = lastmap } <- get
-    case lookup km map of
+    XControl { xbindings = gmap } <- lift get
+    case lookup km gmap of
         Nothing -> do
-            when (not $ member km { keyUp = not $ keyUp km } map) $ do
+            when (not $ member km { keyUp = not $ keyUp km } gmap) $ do
                 lift fallThrough
         Just (Right op) -> do
             lift op
@@ -224,19 +223,14 @@ baseLoop = do
             when (keyboard && S.null keys) $ do
                 lift _ungrabKeyboard
                 put st { gKeyboard = False }
-        resetmap :: GrabEnv ()
-        resetmap = do
-            XControl { xbindings = map } <- lift get
-            modify $ \s -> s { gMap = map }
 
 -- called recursively
 grabbedLoop' :: S.Set KeyCode -> Bindings -> X (S.Set KeyCode)
-grabbedLoop' pressed map = do
-    XEnv { xdisplay = dpy, xroot = root } <- ask
+grabbedLoop' pressed gmap = do
     km <- waitKM
     -- io $ print km
     let pressed' = procSet pressed km
-    case lookup km map of
+    case lookup km gmap of
         Nothing -> do
             return pressed'
         Just (Right op) -> do
@@ -255,12 +249,12 @@ grabbedLoop' pressed map = do
 
 grabbedLoop :: KM -> GrabEnv ()
 grabbedLoop orig = do
-    GrabState { gMap = map } <- get
+    GrabState { gMap = gmap } <- get
     km <- lift waitKM
     procset km
-    case lookup km map of
+    case lookup km gmap of
         Nothing -> do
-            when (member km { keyUp = not $ keyUp km } map) $ do
+            when (member km { keyUp = not $ keyUp km } gmap) $ do
                 redo
         Just (Right op) -> do
             lift op
@@ -397,21 +391,23 @@ _ungrabKeyboard = do
 _grabKM :: KM -> Window -> X ()
 _grabKM k win = do
     XEnv { xdisplay = dpy, xroot = root } <- ask
-    k @ (KM _ st k') <- normalizeKM k
+    KM _ st k' <- normalizeKM k
     case k' of
         KCode c -> liftIO $ grabKey dpy c st win False grabModeAsync
                                 grabModeAsync
         MButton b -> liftIO $ grabButton dpy b st win False
                                 (buttonPressMask .|. buttonReleaseMask)
                                 grabModeAsync grabModeAsync root 0
+        _ -> fail "assertion failed: KM not normalized"
 
 _ungrabKM :: KM -> Window -> X ()
 _ungrabKM k win = do
-    XEnv { xdisplay = dpy, xroot = root } <- ask
+    XEnv { xdisplay = dpy } <- ask
     (KM _ st k') <- normalizeKM k
     case k' of
         KCode c -> liftIO $ ungrabKey dpy c st win
         MButton b -> liftIO $ ungrabButton dpy b st win
+        _ -> fail "assertion failed: KM not normalized"
     return ()
 
 forkX :: X () -> X ThreadId
@@ -477,16 +473,16 @@ forWindows f = do
     mapChildren f root
 
 foldWindows :: (b -> Window -> X b) -> b -> X b
-foldWindows op e = do
+foldWindows op e0 = do
     XEnv { xroot = root, xdisplay = dpy } <- ask
-    forWinA dpy e root where
+    forWinA dpy e0 root where
     forWinA dpy e win = do
-        ret <- op e win
+        result <- op e win
         children <- io $ return . (\(_,_,y) -> y) =<< queryTree dpy win
         liftIO $ forM_ children (addToSaveSet dpy)
-        ret <- foldM (forWinA dpy) ret children
+        results <- foldM (forWinA dpy) result children
         liftIO $ removeFromSaveSet dpy win
-        return ret
+        return results
 
 fallThrough :: X ()
 fallThrough = do
@@ -502,7 +498,6 @@ fallThrough = do
 waitKM :: X KM
 waitKM = do
     XEnv { xdisplay = dpy
-         , xroot = root
          , xlastevent = ptr
          , xtempevent = tmp } <- ask
     XControl { xrepeatkeys = acceptsRepeats } <- get
@@ -588,7 +583,7 @@ inCurrentPos f = do
 
 modifyBindings :: (Bindings -> Bindings) -> X ()
 modifyBindings f = do
-    s@XControl { xbindings = b } <- get
+    XControl { xbindings = b } <- get
     setBindings (f b)
 
 eventToKM' :: XEventPtr -> IO (Time, KM)
@@ -627,7 +622,7 @@ unbind = modifyBindings . delete
 
 printBindings :: X ()
 printBindings =
-    get >>= liftIO . putStrLn . drawNMap . xbindings
+    get >>= liftIO . putStrLn . drawBindings . xbindings
 
 printTargets :: X ()
 printTargets = do

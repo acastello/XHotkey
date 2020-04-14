@@ -18,6 +18,7 @@ import Graphics.X11.Xlib.Extras (Event)
 import Data.Bits
 import Data.Char (toLower)
 import Data.IORef
+import Data.Functor
 import Data.Maybe (fromMaybe)
 import qualified Data.NMap as M
 import Data.NMap hiding (lookup)
@@ -33,10 +34,12 @@ import Text.Read.Lex (numberToInteger)
 import Numeric (showHex)
 
 infixl 7 .<.
-word .<. shift = shiftL word shift
+(.<.) :: Bits a => a -> Int -> a
+word .<. n = shiftL word n
 
 infixl 7 .>.
-word .>. shift = shiftR word shift
+(.>.) :: Bits a => a -> Int -> a
+word .>. n = shiftR word n
 
 #include <X11/Xlib.h>
 
@@ -80,24 +83,25 @@ evalMChan_ :: (Monad m, MonadIO m') => MChan m a -> m () -> m' a
 evalMChan_ chan act = evalMChan chan (act >> return undefined)
 
 runMChan :: MonadIO m' => MChan m a -> (m a -> m' a) -> m' Bool
-runMChan (MChan_ mv1 mv2 st) handle = do
+runMChan (MChan_ mv1 mv2 st) handler = do
     running <- io $ readIORef st
     if running then do
         par <- io $ takeMVar mv1
         case par of
             Left _ -> return False
             Right par' -> do
-                result <- handle par'
+                result <- handler par'
                 io $ putMVar mv2 result
                 return True
     else
         return False
 
+tryEvalMChan :: MonadIO m => MChan n a -> n a -> m (Maybe a)
 tryEvalMChan (MChan_ v1 v2 st) action = io $ do
     running <- readIORef st
     if running then do
-        succ <- tryPutMVar v1 (Right action)
-        if succ then
+        suc <- tryPutMVar v1 (Right action)
+        if suc then
             Just <$> takeMVar v2
         else
             return Nothing
@@ -105,7 +109,7 @@ tryEvalMChan (MChan_ v1 v2 st) action = io $ do
         error "MChan is closed."
 
 tryRunMChan :: MonadIO m' => MChan m a -> (m a -> m' a) -> m' Bool
-tryRunMChan (MChan_ mv1 mv2 st) handle = do
+tryRunMChan (MChan_ mv1 mv2 st) handler = do
     running <- io $ readIORef st
     if running then do
         par <- io $ tryTakeMVar mv1
@@ -113,7 +117,7 @@ tryRunMChan (MChan_ mv1 mv2 st) handle = do
             Nothing -> return True
             Just (Left _) -> return False
             Just (Right par') -> do
-                result <- handle par'
+                result <- handler par'
                 io $ putMVar mv2 result
                 return True
     else
@@ -137,7 +141,7 @@ data XControl = XControl
     { xbindings       :: Bindings
     , xtargets        :: [Window]
     , xrepeatkeys     :: Bool
-    } deriving Show
+    }
 
 defaultXControl :: Display -> XControl
 defaultXControl dpy = XControl mempty [defaultRootWindow dpy] False
@@ -155,15 +159,12 @@ type ForkedX = (XEnv, Window, ThreadId)
 type Bindings = M.NMap KM (X ())
 
 drawBindings :: Bindings -> String
-drawBindings = drawNMap
+drawBindings = drawNMap . ($> ())
 
 -- | X reader monad
 newtype X a = X (ReaderT XEnv (StateT XControl IO) a)
     deriving (Functor, Applicative, Monad, MonadReader XEnv, MonadState XControl
-             , MonadIO, Alternative, MonadPlus, MonadFail)
-
-instance Show (X a) where
-    show _ = "X ()"
+             ,MonadIO, Alternative, MonadPlus, MonadFail)
 
 data GrabState = GrabState
   { gKeyboard :: Bool
@@ -192,6 +193,7 @@ data KM = KM
     , mainKey :: KMitem }
     deriving (Eq)
 
+nullKM :: KM
 nullKM = KM False 0 (KCode 0 )
 
 data KMitem =
@@ -245,8 +247,8 @@ instance Read KMitem where
                             return (MButton n) ]
 
 instance Show KM where
-    show (KM up mod k) =
-        let s = foldMap state' (listModifiers mod)
+    show (KM up mods k) =
+        let s = foldMap state' (listModifiers mods)
         in s ++ (show k) ++ (if up then " Up" else "")
         where state' kc = fromMaybe "" $ lookup kc
                 [ (shiftMask, "Shift-"), (lockMask, "Caps-"), (controlMask, "Ctrl-")
@@ -329,32 +331,27 @@ up_ (KM _ st k) = KM True st k
 addModifier :: Modifier -> KM -> KM
 addModifier m k = k { keyModifiers = (keyModifiers k) .|. m }
 
-shift_ :: KM -> KM
+shift_, caps_, ctrl_, mod1_, alt_, mod2_, num_, mod3_, scroll_, mod4_, win_,
+  mod5_ :: KM -> KM
+
 shift_ = addModifier shiftMask
 
-caps_ :: KM -> KM
 caps_ = addModifier lockMask
 
-ctrl_ :: KM -> KM
 ctrl_ = addModifier controlMask
 
-mod1_ :: KM -> KM
 mod1_ = addModifier mod1Mask
 alt_ = mod1_
 
-mod2_ :: KM -> KM
 mod2_ = addModifier mod2Mask
 num_ = mod2_
 
-mod3_ :: KM -> KM
 mod3_ = addModifier mod3Mask
 scroll_ = mod3_
 
-mod4_ :: KM -> KM
 mod4_ = addModifier mod4Mask
 win_ = mod4_
 
-mod5_ :: KM -> KM
 mod5_ = addModifier mod5Mask
 
 modifiersMask :: Modifier
