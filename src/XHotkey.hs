@@ -1,10 +1,6 @@
 module XHotkey
   ( module XHotkey.Types
   , module XHotkey.Core
-  , module Graphics.X11.Types
-  , module Graphics.X11.ExtraTypes
-  , module Control.Monad.State
-  , module Control.Monad.Reader
   ) where
 
 import Graphics.X11.Types

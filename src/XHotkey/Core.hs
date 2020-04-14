@@ -16,7 +16,7 @@ import Data.Word
 import Control.Concurrent
 import Control.Exception
 import Control.Monad.State
-import Control.Monad.Reader 
+import Control.Monad.Reader
 
 import qualified Data.List as L
 import qualified Data.Map as M
@@ -40,8 +40,8 @@ runX :: (X a) -> IO a
 runX m = do
     dpy <- openDisplay ""
     let root = defaultRootWindow dpy
-    ret <- allocaXEvent $ \e -> allocaXEvent $ \e' -> try $ 
-        fillBytes e 0 xeventsize >> withX m (XEnv dpy root e e') 
+    ret <- allocaXEvent $ \e -> allocaXEvent $ \e' -> try $
+        fillBytes e 0 xeventsize >> withX m (XEnv dpy root e e')
         (defaultXControl dpy)
     closeDisplay dpy
     case ret of
@@ -94,7 +94,7 @@ attachTo :: Window -> Window -> Int32 -> Int32 -> X ()
 attachTo ch pa x y = do
     XEnv { xdisplay = dpy } <- ask
     liftIO $ reparentWindow dpy ch pa x y
-        
+
 setAutorepeat :: Bool -> X ()
 setAutorepeat whether = modify $ \xctrl -> xctrl { xrepeatkeys = whether }
 
@@ -124,7 +124,7 @@ setBindingsTargets rawbinds tars = do
     mapM2 _grabKM (newbase L.\\ oldbase) tars
 
     put xctrl { xbindings = binds, xtargets = tars }
-    
+
     where
         mapM2 f xs ys = sequence_ [f x y | x <- xs, y <- ys]
 
@@ -133,7 +133,7 @@ mainLoop' :: X ()
 mainLoop' = baseLoop' S.empty False
 
 mainLoop :: X ()
-mainLoop = void $ runStateT baseLoop 
+mainLoop = void $ runStateT baseLoop
               $ GrabState False False mempty mempty mempty
 
 baseLoop' :: S.Set KeyCode -> Bool -> X ()
@@ -141,7 +141,7 @@ baseLoop' oldp grabbed = do
     XControl { xbindings = binds } <- get
     km <- waitKM
     let newp = procSet km
-    
+
     grabbed' <- if not grabbed && S.size newp > 1 then do
             _grabKeyboard
             return True
@@ -176,8 +176,8 @@ baseLoop' oldp grabbed = do
 
     where
         procSet :: KM -> S.Set KeyCode
-        procSet km = maybe oldp (\k -> 
-            if keyUp km then 
+        procSet km = maybe oldp (\k ->
+            if keyUp km then
                 S.delete k oldp
             else
                 S.insert k oldp) (kisKeyCode km)
@@ -229,7 +229,7 @@ baseLoop = do
             XControl { xbindings = map } <- lift get
             modify $ \s -> s { gMap = map }
 
--- called recursively 
+-- called recursively
 grabbedLoop' :: S.Set KeyCode -> Bindings -> X (S.Set KeyCode)
 grabbedLoop' pressed map = do
     XEnv { xdisplay = dpy, xroot = root } <- ask
@@ -247,8 +247,8 @@ grabbedLoop' pressed map = do
 
     where
         procSet :: S.Set KeyCode -> KM -> S.Set KeyCode
-        procSet set km = maybe set (\k -> 
-            if keyUp km then 
+        procSet set km = maybe set (\k ->
+            if keyUp km then
                 S.delete k pressed
             else
                 S.insert k pressed) (kisKeyCode km)
@@ -263,7 +263,7 @@ grabbedLoop orig = do
             when (member km { keyUp = not $ keyUp km } map) $ do
                 redo
         Just (Right op) -> do
-            lift op 
+            lift op
             redo
         Just (Left map') -> do
             modify $ \s -> s { gMap = map' }
@@ -298,7 +298,7 @@ mainLoop' = do
     loop tmp mempty
     io $ free tmp
     return ()
-    where 
+    where
       loop :: XEventPtr -> [KM] -> X ()
       loop tmp hk = do
         -- printBindings
@@ -312,7 +312,7 @@ mainLoop' = do
         if typ == clientMessage then
             join $ io $ consumeClientMessage ptr
         else
-            step tmp 
+            step tmp
         loop tmp (rootKeys hk')
       step :: XEventPtr -> X ()
       step tmp = do
@@ -326,34 +326,34 @@ mainLoop' = do
             x <- lookup km' hk'
             case x of
                 Left m -> return $ do
-                    liftIO $ do 
+                    liftIO $ do
                         grabKeyboard dpy root True grabModeAsync grabModeAsync currentTime
-                        grabPointer dpy root True (buttonPressMask .|. buttonReleaseMask) grabModeAsync grabModeAsync 0 0 0 
+                        grabPointer dpy root True (buttonPressMask .|. buttonReleaseMask) grabModeAsync grabModeAsync 0 0 0
                         -- maskEvent dpy (buttonPressMask .|. buttonReleaseMask .|. keyPressMask .|. keyReleaseMask) ptr
                     x <- grabbedLoop' tmp m
-                    liftIO $ do 
+                    liftIO $ do
                         ungrabKeyboard dpy currentTime
                         ungrabPointer dpy currentTime
                     x
                     return ()
                 Right x -> return x
             of
-            Just x -> x 
+            Just x -> x
             Nothing -> return ()
-                
+
       ptrToKM :: XEventPtr -> CInt -> X (Maybe KM)
       ptrToKM ptr n = do
         XEnv { xdisplay = dpy, xlastevent = cur } <- ask
         (t0, km) <- io $ eventToKM' cur
         -- io $ print km
-        (t1, km') <- 
+        (t1, km') <-
             if n > 0 then io $ do
-                peekEvent dpy ptr 
+                peekEvent dpy ptr
                 eventToKM' ptr
             else
                 return (0,nullKM)
         -- io $ putStrLn $ (show n) ++ ": " ++ (show km) ++ " - " ++ (show km')
-        if (km == nullKM) then    
+        if (km == nullKM) then
             return Nothing
         else if n > 0 && t1 == t0 && mainKey km == mainKey km' then io $ do
             -- putStrLn "skippin'"
@@ -383,26 +383,26 @@ mainLoop' = do
       isMButton (KM _ _ (MButton _)) = True
       isMButton _ = False
         -}
-        
+
 _grabKeyboard :: X ()
 _grabKeyboard = do
     XEnv { xdisplay = dpy, xroot = root } <- ask
-    void $ io $ grabKeyboard dpy root True grabModeAsync grabModeAsync 0 
+    void $ io $ grabKeyboard dpy root True grabModeAsync grabModeAsync 0
 
 _ungrabKeyboard :: X ()
 _ungrabKeyboard = do
     XEnv { xdisplay = dpy } <- ask
     void $ io $ ungrabKeyboard dpy 0
-    
+
 _grabKM :: KM -> Window -> X ()
 _grabKM k win = do
     XEnv { xdisplay = dpy, xroot = root } <- ask
     k @ (KM _ st k') <- normalizeKM k
     case k' of
-        KCode c -> liftIO $ grabKey dpy c st win False grabModeAsync 
+        KCode c -> liftIO $ grabKey dpy c st win False grabModeAsync
                                 grabModeAsync
-        MButton b -> liftIO $ grabButton dpy b st win False 
-                                (buttonPressMask .|. buttonReleaseMask) 
+        MButton b -> liftIO $ grabButton dpy b st win False
+                                (buttonPressMask .|. buttonReleaseMask)
                                 grabModeAsync grabModeAsync root 0
 
 _ungrabKM :: KM -> Window -> X ()
@@ -419,7 +419,7 @@ forkX x = do
     xenv@XEnv { xlastevent = ptr } <- ask
     xctrl <- get
     io $ forkIO $ allocaXEvent $ \ptr' -> do
-        copyBytes ptr' ptr 196 
+        copyBytes ptr' ptr 196
         withX x xenv { xlastevent = ptr' } xctrl >> return ()
 
 forkX_ :: X a -> X ()
@@ -440,7 +440,7 @@ spawnPID :: MonadIO m => String -> m ProcessID
 spawnPID prog = forkP $ executeFile "/bin/sh" False ["-c", prog] Nothing
 
 spawn :: MonadIO m => String -> m ()
-spawn = void . spawnPID 
+spawn = void . spawnPID
 
 xlasteventType :: X EventType
 xlasteventType = ask >>= liftIO . get_EventType . xlastevent
@@ -463,7 +463,7 @@ windowTree win = do
           (++ [w]) <$> parents dpy root p
 
 windowsTree :: X (T.Tree Window)
-windowsTree = forWindows return 
+windowsTree = forWindows return
 
 mapChildren :: (Window -> X a) -> Window -> X (T.Tree a)
 mapChildren f win = do
@@ -482,23 +482,23 @@ foldWindows op e = do
     forWinA dpy e root where
     forWinA dpy e win = do
         ret <- op e win
-        children <- io $ return . (\(_,_,y) -> y) =<< queryTree dpy win 
+        children <- io $ return . (\(_,_,y) -> y) =<< queryTree dpy win
         liftIO $ forM_ children (addToSaveSet dpy)
         ret <- foldM (forWinA dpy) ret children
         liftIO $ removeFromSaveSet dpy win
         return ret
-    
+
 fallThrough :: X ()
 fallThrough = do
     XEnv { xdisplay = dpy, xlastevent = lastev } <- ask
     io $ do
-        (win, _) <- getInputFocus dpy 
+        (win, _) <- getInputFocus dpy
         setEventWindow win lastev
         sendEvent dpy win False keyPressMask lastev
     flushX
 
 -- | Wait for a KeyPress, KeyRelease, ButtonPress or ButtonRelease, execute any
--- ClientMessage if necessary, will throw an exception if 
+-- ClientMessage if necessary, will throw an exception if
 waitKM :: X KM
 waitKM = do
     XEnv { xdisplay = dpy
@@ -523,7 +523,7 @@ waitKM = do
                     eventToKM' tmp
                 if t' - t < 40 && km' == km { keyUp = not $ keyUp km } then do
                     io $ nextEvent dpy tmp
-                    waitKM 
+                    waitKM
                 else do
                     io $ copyBytes ptr tmp xeventsize
                     return km
@@ -532,7 +532,7 @@ waitKM = do
     else do
         when (typ == clientMessage) $
             join $ io $ consumeClientMessage ptr
-        waitKM 
+        waitKM
 
 exitX :: X ()
 exitX = mzero
@@ -579,12 +579,12 @@ setPointerPos x y = do
 inCurrentPos :: X a -> X a
 inCurrentPos f = do
     XEnv { xdisplay = dpy } <- ask
-    (x,y) <- pointerPos 
+    (x,y) <- pointerPos
     w <- currentWindow
     ret <- f
     setPointerPos x y
     liftIO $ setInputFocus dpy w 0 0
-    return ret 
+    return ret
 
 modifyBindings :: (Bindings -> Bindings) -> X ()
 modifyBindings f = do
@@ -608,7 +608,7 @@ eventToKM :: XEventPtr -> IO KM
 eventToKM ptr = snd `liftM` eventToKM' ptr
 
 askKM :: X KM
-askKM = ask >>= io . eventToKM . xlastevent    
+askKM = ask >>= io . eventToKM . xlastevent
 
 askKeysym :: X (Maybe KeySym, String)
 askKeysym = do
@@ -627,12 +627,12 @@ unbind = modifyBindings . delete
 
 printBindings :: X ()
 printBindings =
-    get >>= liftIO . putStrLn . drawNMap . xbindings 
+    get >>= liftIO . putStrLn . drawNMap . xbindings
 
 printTargets :: X ()
 printTargets = do
     XEnv { xdisplay = dpy } <- ask
-    XControl { xtargets = targets } <- get 
+    XControl { xtargets = targets } <- get
     strs <- liftIO $ forM targets $ \win -> do
         ch <- getClassHint dpy win
         return $ printf "%#x %s %s" win (show $ resName ch) (show $ resClass ch)

@@ -1,4 +1,4 @@
-module XHotkey.Window 
+module XHotkey.Window
 -- typesym for the function used in win_evmap callbacks
     ( EventCB
 -- X resources used for windows
@@ -81,7 +81,7 @@ putStrJ :: TextJustify -> Position -> Position -> String -> XWin ()
 putStrJ LeftJ x y str = do
     WinEnv { win_putstr = pstr, win_strbounds = strb } <- ask
     (asc, des, _) <- strb ""
-    foldMapN (\s' n -> 
+    foldMapN (\s' n ->
         pstr x (y+n*(fromIntegral $ asc+des)) s') (lines str)
 putStrJ RightJ x y str = do
     WinEnv { win_putstr = pstr, win_strbounds = strb } <- ask
@@ -125,9 +125,9 @@ hideWin :: EventCB
 hideWin _ = do
     WinEnv { win_dpy = dpy, win_id = wid } <- ask
     io $ unmapWindow dpy wid
-    io $ flush dpy 
+    io $ flush dpy
 
-type WChan = MChan XWin 
+type WChan = MChan XWin
 
 newWChan :: MonadIO m => m (WChan a)
 newWChan = newMChan
@@ -147,7 +147,7 @@ win (WinRes bordersz bordercol bgcolor fgcolor fontn) act = (io initThreads >>) 
     let screenn = defaultScreen dpy
         visual = defaultVisual dpy screenn
         colormap = defaultColormap dpy screenn
-    io $ 
+    io $
         withXftColorValue dpy visual colormap xrc $ \xftcol ->
         allocaSetWindowAttributes $ \attr -> do
 
@@ -155,8 +155,8 @@ win (WinRes bordersz bordercol bgcolor fgcolor fontn) act = (io initThreads >>) 
     set_override_redirect attr True
     set_border_pixel attr bordercol
 
-    window <- createWindow dpy root 10 10 10 10 bordersz copyFromParent inputOutput 
-        (defaultVisual dpy (defaultScreen dpy)) 
+    window <- createWindow dpy root 10 10 10 10 bordersz copyFromParent inputOutput
+        (defaultVisual dpy (defaultScreen dpy))
         (cWBorderPixel .|. cWBackPixel .|. cWOverrideRedirect) attr
     gc <- createGC dpy window
     setForeground dpy gc fgcolor
@@ -169,15 +169,15 @@ win (WinRes bordersz bordercol bgcolor fgcolor fontn) act = (io initThreads >>) 
         strb str = io $ do
             asc <- fromIntegral <$> xftfont_ascent xftfont
             desc <- fromIntegral <$> xftfont_descent xftfont
-            width <- fromIntegral <$> xglyphinfo_width <$> 
+            width <- fromIntegral <$> xglyphinfo_width <$>
                 xftTextExtents dpy xftfont (str)
             return (asc, desc, width)
-    -- xftTextExtents dpy xftfont "_" >>= \gi -> print (xglyphinfo_width gi, 
+    -- xftTextExtents dpy xftfont "_" >>= \gi -> print (xglyphinfo_width gi,
         -- xglyphinfo_height gi, xglyphinfo_x gi, xglyphinfo_y gi, xglyphinfo_xOff gi,
         -- xglyphinfo_yOff gi)
 
     ev_f <- newIORef mempty
-    let env = WinEnv dpy window attr gc strb df ev_f 
+    let env = WinEnv dpy window attr gc strb df ev_f
     mv <- newEmptyMVar :: IO (MVar ())
     mapWindow dpy window
     flush dpy
@@ -186,18 +186,18 @@ win (WinRes bordersz bordercol bgcolor fgcolor fontn) act = (io initThreads >>) 
             io $ nextEvent dpy ev
             ev' <- io $ getEvent ev
             f <- io $ readIORef ev_f
-            maybe (return ()) ($ ev') $ M.lookup (ev_event_type ev') f 
+            maybe (return ()) ($ ev') $ M.lookup (ev_event_type ev') f
             return (ev_event_type ev' /= destroyNotify)
         io $ putMVar mv ()
 
-    ret <- runReaderT act env 
+    ret <- runReaderT act env
     io $ destroyWindow dpy window
     flush dpy
     io $ takeMVar mv
     return ret
-    where 
-        xrc = XRenderColor (fromIntegral $ fgcolor `shiftR` 16 .&. 0xff * 0x101) 
-            (fromIntegral $ fgcolor `shiftR` 8 .&. 0xff * 0x101) 
+    where
+        xrc = XRenderColor (fromIntegral $ fgcolor `shiftR` 16 .&. 0xff * 0x101)
+            (fromIntegral $ fgcolor `shiftR` 8 .&. 0xff * 0x101)
             (fromIntegral $ fgcolor .&. 0xff * 0x101) 0xffff
 
 parWin :: WinRes -> X (WChan a)
@@ -236,7 +236,7 @@ writeMsg xc "" = do
         io $ do
             unmapWindow dpy wid
             flush dpy
-    return () 
+    return ()
 writeMsg xc str = do
     evalWChan xc $ do
         WinEnv { win_dpy = dpy, win_putstr = putstr, win_strbounds = strext, win_id = wid } <- ask
@@ -279,10 +279,10 @@ spacing n m = if n > m then
         []
     else
         [n]
-    
+
 words' :: String -> [String]
 words' "" = []
-words' str = 
+words' str =
     let (pre,pos) = break isSpace str
         res = uncurry frst $ words' <$> drop' pos
     in if null pre then
