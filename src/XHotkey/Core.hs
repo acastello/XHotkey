@@ -33,8 +33,8 @@ import System.Process (callCommand)
 import Text.Printf (printf)
 
 
-withX :: X a -> XEnv -> XControl -> IO (a, XControl)
-withX (X a) env control = runStateT (runReaderT a env) control
+withX :: XOver m a -> XEnv -> XControl m -> m (a, XControl m)
+withX (XOver a) env control = runStateT (runReaderT a env) control
 
 runX :: X a -> IO a
 runX m = do
@@ -90,29 +90,29 @@ copyX act = do
         closeDisplay dpy'
         return ret
 
-attachTo :: Window -> Window -> Int32 -> Int32 -> X ()
+attachTo :: MonadIO m => Window -> Window -> Int32 -> Int32 -> XOver m ()
 attachTo ch pa x y = do
     XEnv { xdisplay = dpy } <- ask
     liftIO $ reparentWindow dpy ch pa x y
 
-setAutorepeat :: Bool -> X ()
+setAutorepeat :: Monad m => Bool -> XOver m ()
 setAutorepeat whether = modify $ \xctrl -> xctrl { xrepeatkeys = whether }
 
-waitX :: X ()
+waitX :: Monad m => XOver m ()
 waitX = do
     return ()
 
-setBindings :: Bindings -> X ()
+setBindings :: MonadIO m => Bindings m -> XOver m ()
 setBindings binds = do
     XControl { xtargets = tars } <- get
     setBindingsTargets binds tars
 
-setTargets :: [Window] -> X ()
+setTargets :: MonadIO m => [Window] -> XOver m ()
 setTargets tars = do
     XControl { xbindings = binds } <- get
     setBindingsTargets binds tars
 
-setBindingsTargets :: Bindings -> [Window] -> X ()
+setBindingsTargets :: MonadIO m => Bindings m -> [Window] -> XOver m ()
 setBindingsTargets rawbinds tars = do
     xctrl @ XControl { xbindings = oldbinds, xtargets = oldtars } <- get
     binds <- traverseKeys normalizeKM rawbinds
@@ -129,14 +129,14 @@ setBindingsTargets rawbinds tars = do
         mapM2 f xs ys = sequence_ [f x y | x <- xs, y <- ys]
 
 -- TODO: Change name
-mainLoop' :: X ()
+mainLoop' :: MonadIO m => XOver m ()
 mainLoop' = baseLoop' S.empty False
 
-mainLoop :: X ()
+mainLoop :: MonadIO m => XOver m ()
 mainLoop = void $ runStateT baseLoop
               $ GrabState False False mempty mempty mempty
 
-baseLoop' :: S.Set KeyCode -> Bool -> X ()
+baseLoop' :: MonadIO m => S.Set KeyCode -> Bool -> XOver m ()
 baseLoop' oldp grabbed = do
     XControl { xbindings = binds } <- get
     km <- waitKM
@@ -182,7 +182,7 @@ baseLoop' oldp grabbed = do
             else
                 S.insert k oldp) (kisKeyCode km)
 
-baseLoop :: GrabEnv ()
+baseLoop :: MonadIO m => GrabEnv m ()
 baseLoop = do
     checkgrabs
     km <- lift waitKM
@@ -203,7 +203,7 @@ baseLoop = do
             grabbedLoop km
     baseLoop
     where
-        procset :: KM -> GrabEnv ()
+        procset :: MonadIO m => KM -> GrabEnv m ()
         procset km = do
             st @ GrabState { gKeys = keys, gButtons = buttons } <- get
             case km of
@@ -214,7 +214,7 @@ baseLoop = do
                     let f = if keyUp km then S.delete else S.insert
                     put st { gButtons = f bt buttons }
                 _ -> return ()
-        checkgrabs :: GrabEnv ()
+        checkgrabs :: MonadIO m => GrabEnv m ()
         checkgrabs = do
             st @ GrabState { gKeys = keys, gKeyboard = keyboard } <- get
             when (not keyboard && not (S.null keys)) $ do
@@ -225,7 +225,7 @@ baseLoop = do
                 put st { gKeyboard = False }
 
 -- called recursively
-grabbedLoop' :: S.Set KeyCode -> Bindings -> X (S.Set KeyCode)
+grabbedLoop' :: MonadIO m => S.Set KeyCode -> Bindings m -> XOver m (S.Set KeyCode)
 grabbedLoop' pressed gmap = do
     km <- waitKM
     -- io $ print km
@@ -247,7 +247,7 @@ grabbedLoop' pressed gmap = do
             else
                 S.insert k pressed) (kisKeyCode km)
 
-grabbedLoop :: KM -> GrabEnv ()
+grabbedLoop :: MonadIO m => KM -> GrabEnv m ()
 grabbedLoop orig = do
     GrabState { gMap = gmap } <- get
     km <- lift waitKM
@@ -264,14 +264,14 @@ grabbedLoop orig = do
             grabbedLoop km
             redo
     where
-        redo :: GrabEnv ()
+        redo :: MonadIO m => GrabEnv m ()
         redo = when (not $ keyUp orig) $ do
             GrabState { gKeys = keys, gButtons = buttons } <- get
             flip when (grabbedLoop orig) $ case orig of
                 KM { mainKey = KCode kc } -> kc `S.member` keys
                 KM { mainKey = MButton bt } -> bt `S.member` buttons
                 _ -> False
-        procset :: KM -> GrabEnv ()
+        procset :: Monad m => KM -> GrabEnv m ()
         procset km = do
             st @ GrabState { gKeys = keys, gButtons = buttons } <- get
             case km of
@@ -283,7 +283,7 @@ grabbedLoop orig = do
                     put st { gButtons = f bt buttons }
                 _ -> return ()
 
-{- mainLoop' :: X ()
+{- mainLoop' :: XOver m ()
 mainLoop' = do
     s@XControl { xbindings = hk } <- get
     hk2 <- traverseKeys normalizeKM hk
@@ -293,7 +293,7 @@ mainLoop' = do
     io $ free tmp
     return ()
     where
-      loop :: XEventPtr -> [KM] -> X ()
+      loop :: XEventPtr -> [KM] -> XOver m ()
       loop tmp hk = do
         -- printBindings
         xc @ XControl { xbindings = hk' } <- get
@@ -308,7 +308,7 @@ mainLoop' = do
         else
             step tmp
         loop tmp (rootKeys hk')
-      step :: XEventPtr -> X ()
+      step :: XEventPtr -> XOver m ()
       step tmp = do
         XControl { xbindings = hk' } <- get
         XEnv { xdisplay = dpy, xroot = root, xlastevent = ptr } <- ask
@@ -335,7 +335,7 @@ mainLoop' = do
             Just x -> x
             Nothing -> return ()
 
-      ptrToKM :: XEventPtr -> CInt -> X (Maybe KM)
+      ptrToKM :: XEventPtr -> CInt -> XOver m (Maybe KM)
       ptrToKM ptr n = do
         XEnv { xdisplay = dpy, xlastevent = cur } <- ask
         (t0, km) <- io $ eventToKM' cur
@@ -355,7 +355,7 @@ mainLoop' = do
             return Nothing
         else
             return (Just km)
-      grabbedLoop' :: XEventPtr -> Bindings -> X (X ())
+      grabbedLoop' :: XEventPtr -> Bindings -> XOver m (XOver m ())
       grabbedLoop' tmp m = do
         XEnv { xdisplay = dpy, xroot = root, xlastevent = ptr } <- ask
         liftIO $ nextEvent dpy ptr
@@ -378,17 +378,17 @@ mainLoop' = do
       isMButton _ = False
         -}
 
-_grabKeyboard :: X ()
+_grabKeyboard :: MonadIO m => XOver m ()
 _grabKeyboard = do
     XEnv { xdisplay = dpy, xroot = root } <- ask
     void $ io $ grabKeyboard dpy root True grabModeAsync grabModeAsync 0
 
-_ungrabKeyboard :: X ()
+_ungrabKeyboard :: MonadIO m => XOver m ()
 _ungrabKeyboard = do
     XEnv { xdisplay = dpy } <- ask
     void $ io $ ungrabKeyboard dpy 0
 
-_grabKM :: KM -> Window -> X ()
+_grabKM :: MonadIO m => KM -> Window -> XOver m ()
 _grabKM k win = do
     XEnv { xdisplay = dpy, xroot = root } <- ask
     KM _ st k' <- normalizeKM k
@@ -400,7 +400,7 @@ _grabKM k win = do
                                 grabModeAsync grabModeAsync root 0
         _ -> fail "assertion failed: KM not normalized"
 
-_ungrabKM :: KM -> Window -> X ()
+_ungrabKM :: MonadIO m => KM -> Window -> XOver m ()
 _ungrabKM k win = do
     XEnv { xdisplay = dpy } <- ask
     (KM _ st k') <- normalizeKM k
@@ -416,7 +416,7 @@ forkX x = do
     xctrl <- get
     io $ forkIO $ allocaXEvent $ \ptr' -> do
         copyBytes ptr' ptr 196
-        withX x xenv { xlastevent = ptr' } xctrl >> return ()
+        void $ withX x xenv { xlastevent = ptr' } xctrl
 
 forkX_ :: X a -> X ()
 forkX_ = void . forkX . void
@@ -438,15 +438,15 @@ spawnPID prog = forkP $ executeFile "/bin/sh" False ["-c", prog] Nothing
 spawn :: MonadIO m => String -> m ()
 spawn = void . spawnPID
 
-xlasteventType :: X EventType
+xlasteventType :: MonadIO m => XOver m EventType
 xlasteventType = ask >>= liftIO . get_EventType . xlastevent
 
-flushX :: X ()
+flushX :: MonadIO m => XOver m ()
 flushX = do
     XEnv { xdisplay = dpy } <- ask
     liftIO $flush dpy
 
-windowTree :: Window -> X ([Window], T.Tree Window)
+windowTree :: MonadIO m => Window -> XOver m ([Window], T.Tree Window)
 windowTree win = do
     XEnv { xroot = root, xdisplay = dpy } <- ask
     (_,p,c) <- io (queryTree dpy win)
@@ -458,21 +458,21 @@ windowTree win = do
           (_,p,_) <- io (queryTree dpy w)
           (++ [w]) <$> parents dpy root p
 
-windowsTree :: X (T.Tree Window)
+windowsTree :: MonadIO m => XOver m (T.Tree Window)
 windowsTree = forWindows return
 
-mapChildren :: (Window -> X a) -> Window -> X (T.Tree a)
+mapChildren :: MonadIO m => (Window -> XOver m a) -> Window -> XOver m (T.Tree a)
 mapChildren f win = do
     XEnv { xdisplay = dpy } <- ask
     children <- (\(_,_,z) -> z) <$> io (queryTree dpy win)
     liftM2 T.Node (f win) $ mapM (mapChildren f) children
 
-forWindows :: (Window -> X a) -> X (T.Tree a)
+forWindows :: MonadIO m => (Window -> XOver m a) -> XOver m (T.Tree a)
 forWindows f = do
     XEnv { xroot = root } <- ask
     mapChildren f root
 
-foldWindows :: (b -> Window -> X b) -> b -> X b
+foldWindows :: MonadIO m => (b -> Window -> XOver m b) -> b -> XOver m b
 foldWindows op e0 = do
     XEnv { xroot = root, xdisplay = dpy } <- ask
     forWinA dpy e0 root where
@@ -484,7 +484,7 @@ foldWindows op e0 = do
         liftIO $ removeFromSaveSet dpy win
         return results
 
-fallThrough :: X ()
+fallThrough :: MonadIO m => XOver m ()
 fallThrough = do
     XEnv { xdisplay = dpy, xlastevent = lastev } <- ask
     io $ do
@@ -495,7 +495,7 @@ fallThrough = do
 
 -- | Wait for a KeyPress, KeyRelease, ButtonPress or ButtonRelease, execute any
 -- ClientMessage if necessary, will throw an exception if
-waitKM :: X KM
+waitKM :: MonadIO m => XOver m KM
 waitKM = do
     XEnv { xdisplay = dpy
          , xlastevent = ptr
@@ -529,10 +529,10 @@ waitKM = do
             join $ io $ consumeClientMessage ptr
         waitKM
 
-exitX :: X ()
+exitX :: MonadPlus m => XOver m ()
 exitX = mzero
 
-pointerPos :: X (Position, Position)
+pointerPos :: MonadIO m => XOver m (Position, Position)
 pointerPos = do
     XEnv { xdisplay = dpy, xroot = root, xlastevent = ptr} <- ask
     liftIO $ do
@@ -544,14 +544,14 @@ pointerPos = do
             (_, _, _, x, y, _, _, _) <- queryPointer dpy root
             return (fromIntegral x,fromIntegral y)
 
-relPointerPos :: Window -> X (Position, Position)
+relPointerPos :: MonadIO m => Window -> XOver m (Position, Position)
 relPointerPos w = do
     XEnv { xdisplay = dpy } <- ask
     liftIO $ do
         (_,_,_,_,_, x, y, _) <- queryPointer dpy w
         return (fromIntegral x, fromIntegral y)
 
-pointerProp :: X (Double, Double)
+pointerProp :: MonadIO m => XOver m (Double, Double)
 pointerProp = do
     XEnv { xdisplay = dpy } <- ask
     target <- currentWindow
@@ -559,19 +559,19 @@ pointerProp = do
     (_,_,_, w, h, _,_) <- liftIO $ getGeometry dpy target
     return (fromIntegral x/fromIntegral w, fromIntegral y/fromIntegral h)
 
-currentWindow :: X Window
+currentWindow :: MonadIO m => XOver m Window
 currentWindow = do
     XEnv { xdisplay = dpy } <- ask
     (w, _) <- liftIO $ getInputFocus dpy
     return w
 
-setPointerPos :: Position -> Position -> X ()
+setPointerPos :: MonadIO m => Position -> Position -> XOver m ()
 setPointerPos x y = do
     XEnv { xdisplay = dpy, xroot = root } <- ask
     liftIO $ warpPointer dpy 0 root 0 0 0 0 x y
     return ()
 
-inCurrentPos :: X a -> X a
+inCurrentPos :: MonadIO m => XOver m a -> XOver m a
 inCurrentPos f = do
     XEnv { xdisplay = dpy } <- ask
     (x,y) <- pointerPos
@@ -581,7 +581,7 @@ inCurrentPos f = do
     liftIO $ setInputFocus dpy w 0 0
     return ret
 
-modifyBindings :: (Bindings -> Bindings) -> X ()
+modifyBindings :: MonadIO m => (Bindings m -> Bindings m) -> XOver m ()
 modifyBindings f = do
     XControl { xbindings = b } <- get
     setBindings (f b)
@@ -602,29 +602,29 @@ eventToKM' ptr = do
 eventToKM :: XEventPtr -> IO KM
 eventToKM ptr = snd `liftM` eventToKM' ptr
 
-askKM :: X KM
+askKM :: MonadIO m => XOver m KM
 askKM = ask >>= io . eventToKM . xlastevent
 
-askKeysym :: X (Maybe KeySym, String)
+askKeysym :: MonadIO m => XOver m (Maybe KeySym, String)
 askKeysym = do
     XEnv { xlastevent = ev } <- ask
     let kev = asKeyEvent ev
     io $ lookupString kev
 
-bind :: [KM] -> X () -> X ()
+bind :: MonadIO m => [KM] -> XOver m () -> XOver m ()
 bind [] _ = return ()
 bind kms act = do
     kms' <- traverse normalizeKM kms
     modifyBindings (insert kms' act)
 
-unbind :: [KM] -> X ()
+unbind :: MonadIO m => [KM] -> XOver m ()
 unbind = modifyBindings . delete
 
-printBindings :: X ()
+printBindings :: MonadIO m => XOver m ()
 printBindings =
     get >>= liftIO . putStrLn . drawBindings . xbindings
 
-printTargets :: X ()
+printTargets :: MonadIO m => XOver m ()
 printTargets = do
     XEnv { xdisplay = dpy } <- ask
     XControl { xtargets = targets } <- get
@@ -633,7 +633,7 @@ printTargets = do
         return $ printf "%#x %s %s" win (show $ resName ch) (show $ resClass ch)
     liftIO $ putStrLn $ concat $ ["[", concat $ L.intersperse ", " strs, "]"]
 
-windowPid :: Window -> X (Maybe CPid)
+windowPid :: MonadIO m => Window -> XOver m (Maybe CPid)
 windowPid win = do
     XEnv { xdisplay = dpy } <- ask
     liftIO $ do
@@ -641,15 +641,15 @@ windowPid win = do
         mpid <- getWindowProperty32 dpy atom win
         return $ fmap (fromIntegral . head) mpid
 
-test :: IO ()
-test = runX $ do
-    bind ["q"] exitX
-    bind ["w"] printBindings
-    bind ["1"] (io $ putStrLn "1 down")
-    bind ["1 up"] (io $ putStrLn "1 up")
-    bind ["2"] (io $ putStrLn "2 down")
-    bind ["2 up"] (io $ putStrLn "2 up")
-    bind ["3", "1"] (io $ putStrLn "3, 1")
-    bind ["ctrl-w"] (currentWindow >>= setTargets . pure)
-    bind ["ctrl-r"] (ask >>= setTargets . pure . xroot)
-    mainLoop
+-- test :: IO ()
+-- test = runX $ do
+--     bind ["q"] exitX
+--     bind ["w"] printBindings
+--     bind ["1"] (io $ putStrLn "1 down")
+--     bind ["1 up"] (io $ putStrLn "1 up")
+--     bind ["2"] (io $ putStrLn "2 down")
+--     bind ["2 up"] (io $ putStrLn "2 up")
+--     bind ["3", "1"] (io $ putStrLn "3, 1")
+--     bind ["ctrl-w"] (currentWindow >>= setTargets . pure)
+--     bind ["ctrl-r"] (ask >>= setTargets . pure . xroot)
+--     mainLoop

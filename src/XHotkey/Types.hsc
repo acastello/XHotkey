@@ -137,51 +137,45 @@ data XEnv = XEnv
     , xtempevent    :: XEventPtr
     } deriving Show
 
-data XControl = XControl
-    { xbindings       :: Bindings
+data XControl m = XControl
+    { xbindings       :: Bindings m
     , xtargets        :: [Window]
     , xrepeatkeys     :: Bool
     }
 
-defaultXControl :: Display -> XControl
+defaultXControl :: Display -> XControl m
 defaultXControl dpy = XControl mempty [defaultRootWindow dpy] False
-
-data Hook
-    = OnClear (X ())
-    | OnKM (KM -> X ())
-    | OnExit (X ())
-    | OnGrab (KM -> Bindings -> X ())
-    | OnAction { onAction :: KM -> X () -> X () }
-    | OnLoop (X ())
 
 type ForkedX = (XEnv, Window, ThreadId)
 
-type Bindings = M.NMap KM (X ())
+type Bindings m = M.NMap KM (XOver m ())
 
-drawBindings :: Bindings -> String
+drawBindings :: Bindings m -> String
 drawBindings = drawNMap . ($> ())
 
--- | X reader monad
-newtype X a = X (ReaderT XEnv (StateT XControl IO) a)
-    deriving (Functor, Applicative, Monad, MonadReader XEnv, MonadState XControl
-             ,MonadIO, Alternative, MonadPlus, MonadFail)
+-- | XOver reader monad
+newtype XOver m a = XOver (ReaderT XEnv (StateT (XControl m) m) a)
+    deriving (Functor, Applicative, Monad, MonadReader XEnv
+      , MonadState (XControl m), MonadIO, Alternative, MonadPlus, MonadFail)
 
-data GrabState = GrabState
+type X = XOver IO
+
+data GrabState m = GrabState
   { gKeyboard :: Bool
   , gPointer  :: Bool
   , gKeys     :: S.Set KeyCode
   , gButtons  :: S.Set Button
-  , gMap      :: Bindings
+  , gMap      :: Bindings m
   }
 
-type GrabEnv = StateT GrabState X
+type GrabEnv m = StateT (GrabState m) (XOver m)
 
-type XChan = MChan X
+type XChan m = MChan (XOver m)
 
-newXChan :: MonadIO m => m (XChan a)
+newXChan :: MonadIO m => m (XChan m' a)
 newXChan = newMChan
 
-closeXChan :: MonadIO m => XChan a -> m ()
+closeXChan :: (MonadIO m, MonadPlus m') => XChan m' a -> m ()
 closeXChan xc = do
     evalMChan_ xc mzero
     closeMChan xc
@@ -360,14 +354,14 @@ modifiersMask = sum [1 `shiftL` i | i <- [0..12]]
 listModifiers :: Modifier -> [Modifier]
 listModifiers s = [s .&. (1 `shiftL` i) | i <- [0..12], testBit s i]
 
-normalizeKM :: KM -> X KM
+normalizeKM :: MonadIO m => KM -> XOver m KM
 normalizeKM (KM u s (KSym ks)) = do
     XEnv { xdisplay = dpy } <- ask
     kc <- liftIO $ keysymToKeycode dpy ks
     return (KM u s (KCode kc))
 normalizeKM km = return km
 
-symfyKM :: KM -> X KM
+symfyKM :: MonadIO m => KM -> XOver m KM
 symfyKM (KM u s (KCode kc)) = do
     XEnv { xdisplay = dpy } <- ask
     ks <- liftIO $ keycodeToKeysym dpy kc 0
@@ -380,7 +374,7 @@ setEventWindow win ptr = do
 
 type ClientMessage = XEventPtr
 
-newClientMessage :: Display -> Window -> X () ->  IO ClientMessage
+newClientMessage :: Display -> Window -> XOver m () ->  IO ClientMessage
 newClientMessage display win act = do
     sptr <- newStablePtr act
     ptr <- callocBytes #size XEvent
@@ -398,12 +392,12 @@ freeClientMessage msg = do
     freeStablePtr $ castPtrToStablePtr ptr
     free msg
 
-peekClientMessage :: ClientMessage -> IO (X ())
+peekClientMessage :: ClientMessage -> IO (XOver m ())
 peekClientMessage msg = do
     ptr <- (#peek XClientMessageEvent, data) msg
     deRefStablePtr ptr
 
-consumeClientMessage :: ClientMessage -> IO (X ())
+consumeClientMessage :: ClientMessage -> IO (XOver m ())
 consumeClientMessage msg = do
     ptr <- castPtrToStablePtr <$> (#peek XClientMessageEvent, data) msg
     act <- deRefStablePtr ptr
